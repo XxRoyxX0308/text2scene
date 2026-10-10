@@ -1,0 +1,38 @@
+# Everything the pipeline produces (candidates, GLBs, renders, logs)
+work/*
+
+# Blender
+*.blend
+*.blend1
+*.blend2
+*.json
+
+# 3D models and model weights, wherever they end up
+*.glb
+*.gltf
+*.safetensors
+*.pth
+*.ckpt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Secrets
+.env
+*.token
+
+# Editor / OS
+.vscode/
+.idea/
+.claude/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Scene descriptions and other inputs are project-specific; keep them out of the repo
+/*.md
+!/README.md
+!/AGENT.md
