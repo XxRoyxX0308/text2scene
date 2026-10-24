@@ -1,0 +1,72 @@
+{
+  "name": "L_Example_Entrance",
+  "rooms": [
+    {"id": "PLAZA", "kit": "alsi", "origin": [-2, -10], "size": [16, 10, 6], "outdoor": true, "floor": "asphalt"},
+    {"id": "LOBBY", "kit": "alsi", "origin": [0, 0], "size": [12, 10, 5],
+     "openings": [
+       {"wall": "S", "at": 7, "kind": "door", "to": "PLAZA"},
+       {"wall": "S", "at": 1, "kind": "window"}, {"wall": "S", "at": 3, "kind": "window"},
+       {"wall": "S", "at": 9, "kind": "window"}, {"wall": "S", "at": 11, "kind": "window"},
+       {"wall": "E", "at": 5, "kind": "open", "width": 2, "height": 3.0, "to": "CORR"}
+     ]},
+    {"id": "CORR", "kit": "alsi", "origin": [12, 0], "size": [4, 10, 3.5], "floor": "concrete",
+     "openings": [{"wall": "E", "at": 7, "kind": "door", "to": "OFFICE"}]},
+    {"id": "OFFICE", "kit": "alsi", "origin": [16, 2], "size": [10, 8, 3.5],
+     "openings": [{"wall": "E", "at": 3, "kind": "window"}, {"wall": "E", "at": 5, "kind": "window"}]}
+  ],
+  "props": [
+    {"asset": "reception_desk", "room": "LOBBY", "pos": [6, 6.5], "yaw": 0},
+    {"asset": "screen_lobby", "room": "LOBBY", "against": "N", "at": 6, "z": 1.6},
+    {"asset": "lounge_sofa", "room": "LOBBY", "against": "W", "at": 4},
+    {"asset": "lounge_sofa", "room": "LOBBY", "against": "W", "at": 7.2},
+    {"asset": "planter", "room": "LOBBY", "pos": [0.6, 0.7]},
+    {"asset": "planter", "room": "LOBBY", "pos": [11.3, 9.3], "yaw": 40},
+    {"asset": "trash_bin", "room": "CORR", "against": "W", "at": 2},
+    {"asset": "office_desk", "room": "OFFICE", "pos": [3, 3], "yaw": 0},
+    {"asset": "office_desk", "room": "OFFICE", "pos": [6, 3], "yaw": 0},
+    {"asset": "office_desk", "room": "OFFICE", "pos": [3, 5.5], "yaw": 180},
+    {"asset": "office_desk", "room": "OFFICE", "pos": [6, 5.5], "yaw": 180},
+    {"asset": "office_chair", "room": "OFFICE", "pos": [3.1, 2.2], "yaw": 188},
+    {"asset": "office_chair", "room": "OFFICE", "pos": [6.2, 2.3], "yaw": 168},
+    {"asset": "office_chair", "room": "OFFICE", "pos": [2.8, 6.4], "yaw": -10},
+    {"asset": "office_chair", "room": "OFFICE", "pos": [6.0, 6.2], "yaw": 15}
+  ],
+  "scatter": [
+    {"room": "OFFICE", "assets": ["paper_stack", "trash_bin"], "count": 6, "zone": "edges", "seed": 3},
+    {"room": "PLAZA", "assets": ["planter"], "count": 4, "zone": "edges", "seed": 5, "yaw_jitter": 180}
+  ],
+  "decals": [
+    {"asset": "floor_scuffs", "room": "LOBBY", "on": "floor", "pos": [7, 2], "yaw": 20},
+    {"asset": "floor_scuffs", "room": "CORR", "on": "floor", "pos": [2, 4], "yaw": 95},
+    {"asset": "floor_scuffs", "room": "CORR", "on": "floor", "pos": [2, 8], "yaw": 200},
+    {"asset": "wall_grime", "room": "CORR", "on": "wall:W", "pos": [3, 0.6]},
+    {"asset": "wall_grime", "room": "CORR", "on": "wall:E", "pos": [3, 0.6]},
+    {"asset": "water_stain", "room": "PLAZA", "on": "floor", "pos": [4, 4], "yaw": 60}
+  ],
+  "lights": [
+    {"room": "LOBBY", "type": "rect", "grid": {"spacing": [3, 3]}, "size": [1.2, 0.3], "lumens": 2400, "kelvin": 4500,
+     "radius": 9, "shadows": false, "mobility": "static", "fixture": "ceiling_light"},
+    {"room": "LOBBY", "type": "spot", "pos": [6, 8.5, 4.9], "dir": [0, 0.35, -1], "cone": 50, "lumens": 3000,
+     "kelvin": 5600, "radius": 8, "shadows": true, "mobility": "stationary"},
+    {"room": "CORR", "type": "rect", "grid": {"spacing": [4, 3]}, "size": [1.2, 0.3], "lumens": 1800, "kelvin": 4500,
+     "radius": 6, "mobility": "static", "fixture": "ceiling_light"},
+    {"room": "OFFICE", "type": "rect", "grid": {"spacing": [3, 3]}, "size": [1.2, 0.3], "lumens": 2200, "kelvin": 4300,
+     "radius": 7, "mobility": "static", "fixture": "ceiling_light"}
+  ],
+  "lighting": {
+    "gi": "dynamic",
+    "sun": {"dir": [-0.45, 0.55, -0.7], "lux": 75000, "kelvin": 5800, "shadows": true},
+    "sky": true,
+    "fog": {"density": 0.015, "height_falloff": 0.25, "volumetric": true, "color": [0.75, 0.82, 0.9]},
+    "post": {"exposure": [6, 14], "bloom": 0.35, "vignette": 0.25, "grain": 0.03, "saturation": 0.95,
+             "contrast": 1.05, "white_balance": 6800, "ao": 0.5}
+  },
+  "cameras": [
+    {"id": "PLAZA_v1", "room": "PLAZA", "pos": [8, 2, 1.6], "look": [9, 10, 2.0]},
+    {"id": "LOBBY_v1", "room": "LOBBY", "pos": [7, 1.2, 1.6], "look": [6, 9, 1.8]},
+    {"id": "LOBBY_v2", "room": "LOBBY", "pos": [11, 9, 1.6], "look": [1, 1, 1.4]},
+    {"id": "CORR_v1", "room": "CORR", "pos": [2, 0.8, 1.6], "look": [2, 10, 1.6]},
+    {"id": "OFFICE_v1", "room": "OFFICE", "pos": [0.8, 7, 1.6], "look": [9, 1, 1.0]}
+  ],
+  "player_start": {"room": "PLAZA", "pos": [8, 2, 0], "yaw": 0}
+}

@@ -1,0 +1,68 @@
+{
+  "description": "Example: a clean corporate research facility entrance (plaza, lobby, corridor, office). Warm white painted walls, terrazzo floors, brushed steel trims, ice-blue accents.",
+  "target": {"engine": "unreal", "unity_pipeline": "urp"},
+  "generation": {
+    "candidates": 4,
+    "megapixels": 1.0,
+    "suffix": "The single object alone, centered, the whole object fully inside the frame with empty margin on all sides. Three-quarter view from slightly above eye level. Pure white seamless background, flat even studio lighting, no cast shadow, no floor, no people. Photorealistic product photograph, no text, no logos.",
+    "decal_suffix": "Straight top-down photograph of the mark alone on a pure white background, soft irregular edges fading into the white, no objects, no shadow, no border, no text."
+  },
+  "materials": [
+    {"id": "paint_white",    "source": "flat", "color": [0.80, 0.79, 0.76], "roughness": 0.55, "noise": 0.05},
+    {"id": "terrazzo",       "source": "ambientcg:Terrazzo013", "res": "2k", "tile_m": 2.0},
+    {"id": "concrete",       "source": "polyhaven:concrete_floor_02", "res": "2k", "tile_m": 2.0},
+    {"id": "asphalt",        "source": "polyhaven:asphalt_02", "res": "2k", "tile_m": 2.0, "macro": 0.2},
+    {"id": "steel_brushed",  "source": "flat", "color": [0.62, 0.63, 0.64], "roughness": 0.32, "metallic": 1.0, "noise": 0.08},
+    {"id": "ceiling_panel",  "source": "flat", "color": [0.84, 0.84, 0.82], "roughness": 0.8, "noise": 0.03},
+    {"id": "glass_clear",    "source": "glass", "color": [0.90, 0.95, 1.0], "opacity": 0.12, "roughness": 0.03}
+  ],
+  "kit": {
+    "module": 2.0,
+    "wall_thickness": 0.2,
+    "bevel": 0.012,
+    "door": {"width": 1.2, "height": 2.3},
+    "window": {"width": 1.5, "height": 1.8, "sill": 0.6},
+    "sets": {
+      "alsi": {"wall": "paint_white", "trim": "steel_brushed", "floor": "terrazzo", "ceiling": "ceiling_panel",
+               "glass": "glass_clear", "exterior": "concrete", "baseboard": 0.1}
+    }
+  },
+  "props": [
+    {"id": "reception_desk", "category": "hero", "condition": "new", "width_m": 3.2,
+     "prompt": "A long modern corporate reception desk with a curved front panel in glossy warm white lacquer, a pale oak wood countertop and a thin brushed steel kick strip at the base, about 3.2 metres long and 1.1 metres high.",
+     "trellis": {"faces": 60000, "texture": 2048, "high_faces": 300000}},
+    {"id": "lounge_sofa", "category": "prop", "condition": "used", "width_m": 2.1,
+     "prompt": "A modern three-seat lounge sofa upholstered in light grey wool fabric with slim black metal legs, about 2.1 metres wide.",
+     "trellis": {"faces": 30000, "texture": 2048}},
+    {"id": "planter", "category": "prop", "condition": "new", "height_m": 1.4,
+     "prompt": "A tall matte white cylindrical floor planter holding a rubber fig plant with large glossy dark green leaves, about 1.4 metres tall in total. Chunky solid leaves.",
+     "trellis": {"faces": 40000, "texture": 2048}},
+    {"id": "office_chair", "category": "prop", "condition": "used", "height_m": 1.0, "collision": "convex",
+     "prompt": "A modern black ergonomic office task chair with a black mesh backrest, padded seat, adjustable armrests and five castors on a star base.",
+     "trellis": {"faces": 25000, "texture": 1024}},
+    {"id": "office_desk", "category": "prop", "condition": "used", "width_m": 1.6,
+     "prompt": "A simple office desk with a white laminate top and a brushed steel frame, 1.6 metres wide and 0.75 metres high, with a closed white modesty panel.",
+     "trellis": {"faces": 15000, "texture": 1024}},
+    {"id": "paper_stack", "category": "small", "condition": "used", "width_m": 0.32, "collision": "none",
+     "prompt": "A small untidy stack of white A4 office papers and two manila folders.",
+     "trellis": {"faces": 4000, "texture": 512}},
+    {"id": "trash_bin", "category": "small", "condition": "used", "height_m": 0.45,
+     "prompt": "A round brushed steel office waste bin, about 45 cm tall.",
+     "trellis": {"faces": 4000, "texture": 512}},
+    {"id": "ceiling_light", "category": "small", "condition": "new", "width_m": 1.2, "collision": "none", "emissive": 0,
+     "prompt": "A slim rectangular recessed LED ceiling light panel with a thin white aluminium frame and an opal diffuser, 1.2 metres long and 30 cm wide, seen from below.",
+     "trellis": {"faces": 2000, "texture": 512}},
+    {"id": "screen_lobby", "mode": "image_slab", "aspect": 1.78, "width_m": 2.4, "emissive": 3.0,
+     "frame": {"depth": 0.06, "border": 0.02, "color": [0.03, 0.03, 0.035]},
+     "suffix": "Flat straight-on screenshot filling the whole frame edge to edge, no monitor bezel, no perspective, no text.",
+     "prompt": "A calm corporate looping visual: soft ice-blue abstract DNA helix ribbons over a deep navy gradient background, gentle glow."}
+  ],
+  "decals": [
+    {"id": "floor_scuffs", "size_m": [2.0, 2.0], "alpha": "luma", "roughness": 0.75, "opacity": 0.6,
+     "prompt": "Faint grey shoe scuff marks and light dirt smears on a floor, sparse and subtle."},
+    {"id": "wall_grime", "size_m": [2.0, 1.2], "alpha": "luma", "roughness": 0.85, "opacity": 0.45,
+     "prompt": "A soft vertical band of greyish brown dirt and hand smudges as found near the bottom of a public wall, fading upward."},
+    {"id": "water_stain", "size_m": [1.5, 1.5], "alpha": "luma", "roughness": 0.25,
+     "prompt": "A dried water puddle stain with darker rings at its edges, irregular organic shape."}
+  ]
+}

@@ -2,6 +2,8 @@
 
   sheet : build a contact sheet (all candidates, numbered) per object for review
   matte : take the candidate named in work/selection.json, remove the background (RMBG-2.0) -> rgba.png + review.png
+          (only for what needs a cut-out: TRELLIS props and decals with "alpha": "matte"; image slabs and
+          "luma" decals are used straight from their candidate)
 
 usage (trellis2 env): python 02_select_matte.py <project_dir> sheet|matte [object_id ...]
 """
@@ -16,8 +18,18 @@ from PIL import Image, ImageDraw
 PROJECT, MODE = sys.argv[1], sys.argv[2]
 ONLY = set(sys.argv[3:])
 sys.path.insert(0, os.path.expanduser("~/TRELLIS.2"))
-scene = json.load(open(os.path.join(PROJECT, "scene.json"), encoding="utf-8"))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from t2s import Project
+
+project = Project(PROJECT)
+decal_ids = {d["id"] for d in project.decals()}
 CELL = 512
+
+
+def needs_matte(obj):
+    if obj["id"] in decal_ids:
+        return obj.get("alpha", "luma") == "matte"
+    return obj.get("mode") != "image_slab"
 
 
 def fit(im, size=CELL):
@@ -67,13 +79,14 @@ def matte(obj, d, pick):
 
 selection = {}
 if MODE == "matte":
-    selection = json.load(open(os.path.join(PROJECT, "work", "selection.json"), encoding="utf-8"))
-for obj in scene["objects"]:
+    selection = json.load(open(project.p("work", "selection.json"), encoding="utf-8"))
+for obj, d in project.generated():
     if ONLY and obj["id"] not in ONLY:
         continue
-    d = os.path.join(PROJECT, "work", "objects", obj["id"])
     if MODE == "sheet":
         sheet(obj, d)
+    elif not needs_matte(obj):
+        continue
     elif obj["id"] in selection:
         matte(obj, d, selection[obj["id"]]["pick"])
     else:

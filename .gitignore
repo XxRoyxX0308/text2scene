@@ -1,11 +1,16 @@
-# Everything the pipeline produces (candidates, GLBs, renders, logs)
+# Everything the pipeline produces (candidates, GLBs, bakes, engine package, shots, logs)
 work/*
+export/
 
 # Blender
 *.blend
 *.blend1
 *.blend2
+
+# Project inputs (assets.json, layout.json) and the machine config (t2s.config.json) are per user;
+# the examples are part of the repo
 *.json
+!/examples/*.json
 
 # 3D models and model weights, wherever they end up
 *.glb

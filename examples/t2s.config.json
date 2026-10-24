@@ -1,0 +1,7 @@
+{
+  "blender": "D:/Blender Foundation/Blender 5.2/blender.exe",
+  "unreal_editor": "D:/Epic Games/UE_5.8/Engine/Binaries/Win64/UnrealEditor.exe",
+  "unreal_project": "D:/MyGame/MyGame.uproject",
+  "unity_editor": "D:/Unity/Editors/6000.6.6f1/Editor/Unity.exe",
+  "unity_project": "D:/MyUnityGame"
+}

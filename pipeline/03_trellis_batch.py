@@ -1,11 +1,14 @@
-"""Step 3: RGBA cut-outs -> textured GLB with TRELLIS.2 (pipeline loaded once, finished objects are skipped).
+"""Step 3: RGBA cut-outs of props -> textured GLB with TRELLIS.2 (pipeline loaded once, finished props skipped).
 
 usage (inside the trellis2 env): python 03_trellis_batch.py <project_dir> [object_id ...]
 Exits with code 3 on the first failure; rerun it (finished objects are skipped), e.g. via trellis_loop.sh.
 
 trellis.pipeline_type defaults to "512"; "1024_cascade" gives finer geometry but can run out of VRAM on a 12 GB card
 (solid blocks and foliage did).
-The GLB is decimated to trellis.faces (default 30000) before the texture is baked, so the scene stays light.
+The GLB is decimated to trellis.faces (default 30000) before the texture is baked: this is the game mesh (LOD0)
+that 20_bake_props.py turns into LODs. With trellis.high_faces (e.g. 300000, recommended for hero props) a second,
+denser model_high.glb is written from the same result; 20_bake_props.py bakes its surface detail into a normal
+map for the low mesh (the standard high -> low workflow).
 """
 import os
 os.environ['OPENCV_IO_ENABLE_OPENEXR'] = '1'
@@ -17,22 +20,24 @@ import time
 import traceback
 
 sys.path.insert(0, os.path.expanduser("~/TRELLIS.2"))  # this script lives outside the repo
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import torch
 from PIL import Image
 from trellis2.pipelines import Trellis2ImageTo3DPipeline
 import o_voxel
+from t2s import Project
 
 PROJECT = sys.argv[1]
 ONLY = set(sys.argv[2:])
 FACES = 30000
 
-scene = json.load(open(os.path.join(PROJECT, "scene.json"), encoding="utf-8"))
+project = Project(PROJECT)
 todo = []
-for obj in scene["objects"]:
-    d = os.path.join(PROJECT, "work", "objects", obj["id"])
+for obj in project.props():
+    d = project.work_prop(obj["id"])
     if obj.get("status") == "rejected" or obj.get("mode") == "image_slab" or (ONLY and obj["id"] not in ONLY):
-        continue  # image_slab objects (text signs) are built in Blender from their 2D image, not by TRELLIS
+        continue  # image slabs (posters, screens) are built by 20_bake_props.py from their 2D image
     if os.path.exists(os.path.join(d, "model.glb")) and not ONLY:
         print(f"[skip] {obj['id']} already has model.glb", flush=True)
         continue
@@ -60,23 +65,31 @@ for obj, d in todo:
         mesh.simplify(16777216)  # nvdiffrast limit
         gc.collect()
         torch.cuda.empty_cache()
-        glb = o_voxel.postprocess.to_glb(
-            vertices=mesh.vertices,
-            faces=mesh.faces,
-            attr_volume=mesh.attrs,
-            coords=mesh.coords,
-            attr_layout=mesh.layout,
-            voxel_size=mesh.voxel_size,
-            aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
-            decimation_target=cfg.get("faces", FACES),
-            texture_size=cfg.get("texture", 2048),
-            remesh=True,
-            remesh_band=1,
-            remesh_project=0,
-            verbose=False,
-        )
-        # PNG textures: Blender builds without WebP glTF support would otherwise import untextured
-        glb.export(os.path.join(d, "model.glb"))
+        def export(path, faces, texture, remesh):
+            glb = o_voxel.postprocess.to_glb(
+                vertices=mesh.vertices,
+                faces=mesh.faces,
+                attr_volume=mesh.attrs,
+                coords=mesh.coords,
+                attr_layout=mesh.layout,
+                voxel_size=mesh.voxel_size,
+                aabb=[[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]],
+                decimation_target=faces,
+                texture_size=texture,
+                remesh=remesh,
+                remesh_band=1,
+                remesh_project=0,
+                verbose=False,
+            )
+            # PNG textures: Blender builds without WebP glTF support would otherwise import untextured
+            glb.export(path)
+
+        if cfg.get("high_faces"):
+            # same transform as the low mesh, so the two line up for baking; its texture is never used
+            export(os.path.join(d, "model_high.glb"), cfg["high_faces"], 512, False)
+            gc.collect()
+            torch.cuda.empty_cache()
+        export(os.path.join(d, "model.glb"), cfg.get("faces", FACES), cfg.get("texture", 2048), True)
         print(f"[done] {obj['id']} in {time.time() - t0:.0f}s", flush=True)
     except Exception:
         print(f"[FAIL] {obj['id']}", flush=True)
@@ -85,6 +98,6 @@ for obj, d in todo:
         sys.stdout.flush()
         os._exit(3)
     finally:
-        mesh = glb = None
+        mesh = None
         gc.collect()
         torch.cuda.empty_cache()

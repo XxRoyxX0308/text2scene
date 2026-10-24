@@ -1,93 +1,108 @@
 # text2scene
 
-把一份場景文字描述變成可編輯的 Blender 場景，不需要任何參考圖。由 Claude 讀文字、決定需要哪些物件並為每個物件撰寫 prompt，FLUX.2 klein 4B 生成每個物件的乾淨 2D 圖，TRELLIS.2 轉成 3D 模型，最後由 Claude 透過 Blender MCP 在 Blender 裡直接建出建築、擺放模型、把空間填滿、打光。
+把一份場景文字描述變成 **Unreal Engine 5 或 Unity 6** 裡可以玩的關卡，不需要參考圖。
 
-![各空間的第一人稱渲染](preview.png)
+- **資產在 Blender 做，場景在引擎組。** Blender 只在背景批次處理資產（清理、烘焙、LOD、碰撞、模組件）；格局、擺位、燈光、後處理全部在引擎裡生成。
+- **引擎可以換。** 所有資產與關卡先輸出成引擎中立的 `export/`（FBX + PNG + JSON），再由各引擎的匯入器建出關卡；同一份資料可以同時匯入 Unreal 與 Unity。
+- **針對「塑膠感」與效能設計。** 粗糙度擾動、髒污與邊緣磨損、Albedo 範圍限制、倒角、貼圖密度統一、世界座標大尺度變化、貼花；LOD、Nanite、instancing、碰撞簡化、效能預算報告。
+
+![同一份 level.json 在 Unreal（上）與 Unity（下）的審查截圖](preview.png)
 
 ## 流程
 
 ```
-場景文字描述（空間的尺寸、材質、固定物件、光線）
-  │  Claude 讀文字 → 空間配置、物件清單 → scene.json（每個物件一段 prompt）
+場景文字描述
+  │  agent 讀文字 → 空間配置（格線）、物件 / 材質 / 貼花清單 → assets.json + layout.json
   ▼
-FLUX.2 klein 4B：prompt → 白底單一物件圖
-  │  Claude 逐張審核，有缺點就改寫 prompt 再生成（每個物件至少 4 張）
+資產
+  ├─ 道具：FLUX.2 klein 4B 生成白底圖（逐張審核、改 prompt）→ RMBG 去背 → TRELLIS.2 → GLB
+  │        → Blender 背景批次：刪內殼、縮放與原點、烘焙 AO / 曲率 / 法線、依「新舊程度」做髒污與磨損、
+  │          貼圖密度、LOD、碰撞 → FBX + PNG，並產生報告（只需要看被標記的）
+  ├─ 平面影像（海報、螢幕）：FLUX 正面圖 → 帶框薄板
+  ├─ 貼花：FLUX 白底俯拍 → 去背 + 法線
+  ├─ 表面材質：Poly Haven / ambientCG（CC0 掃描）或程序化平塗
+  └─ 模組件：Blender 依格局需要產生牆、門、窗、柱、地板、天花（倒角、加權法線、公尺 UV、碰撞）
   ▼
-選出最佳的一張 → RMBG-2.0 去背
-  │  TRELLIS.2（預設 512 管線）→ 已減面、帶貼圖的 GLB
-  │  海報、螢幕畫面等平面影像不轉 3D，直接做成貼圖薄板
+30_layout.py：rooms → 全域牆圖（共用牆只建一次）、道具擺位、散佈、貼花、燈光陣列、探針、鏡頭、效能預算
   ▼
-Blender（由 Claude 透過 Blender MCP 操作，沒有建置腳本）
-  │  依文字的尺寸與連接關係建出每個空間 → 匯入模型並擺位
-  │  把看得到的空面填滿（分縫、標示、設備、道具）→ 程序化材質、燈光
-  │  Claude 每一步都看畫面，最後逐項對照文字描述驗收
-  ▼
-scene.blend
+export/（引擎中立） ──► Unreal：主材質 + 材質實例、Nanite 網格、關卡、Lumen、天空、霧、後處理、截圖
+                    └─► Unity：URP / HDRP / Built-in 材質、LODGroup prefab、場景、Volume、探針、截圖
 ```
 
-完整的逐步操作說明在 [AGENT.md](AGENT.md)，那是寫給執行這條管線的 AI agent 看的手冊。
+逐步操作說明在 [AGENT.md](AGENT.md)（寫給執行管線的 AI agent），美術與效能的數字標準在 [docs/STANDARDS.md](docs/STANDARDS.md)。
 
 ## 需求
 
-- Windows 11 + WSL2 Ubuntu，NVIDIA 顯示卡 12 GB VRAM 以上（在 RTX 3060 上測試）
-- WSL 記憶體 24 GB 以上，另加 swap
-- [TRELLIS.2](https://github.com/microsoft/TRELLIS.2)，裝在 `~/TRELLIS.2`，conda 環境 `trellis2`
-- [ComfyUI](https://github.com/comfyanonymous/ComfyUI)，裝在 `~/ComfyUI`，conda 環境 `comfyui`
-- [FLUX.2 klein](https://github.com/black-forest-labs/flux2) 4B 的模型檔，放在 `~/ComfyUI/models/`：`flux-2-klein-4b-fp8.safetensors`、`qwen_3_4b.safetensors`、`flux2-vae.safetensors`（下載位置見 [ComfyUI 官方教學](https://docs.comfy.org/tutorials/flux/flux-2-klein)）
-- Blender 5.x，並安裝 MCP for Blender 外掛、在 agent 端接上 Blender MCP；整個流程中 Blender 要開著
+| 用途 | 需要 |
+|---|---|
+| 2D 圖與 3D 模型 | Windows 11 + WSL2 Ubuntu、NVIDIA 12 GB VRAM 以上（RTX 3060 測試）、[TRELLIS.2](https://github.com/microsoft/TRELLIS.2)（`~/TRELLIS.2`，conda env `trellis2`）、[ComfyUI](https://github.com/comfyanonymous/ComfyUI)（`~/ComfyUI`，conda env `comfyui`）與 [FLUX.2 klein](https://docs.comfy.org/tutorials/flux/flux-2-klein) 4B 模型檔 |
+| 資產處理 | Blender 5.x（背景執行，不需開介面）；Windows Python 3 + numpy + Pillow |
+| 引擎（擇一或都要） | Unreal Engine 5.x（Python Editor Script Plugin、Editor Scripting Utilities，皆隨引擎附帶），或 Unity 6（URP / HDRP / Built-in 皆可；URP 貼花需要 Renderer 上的 Decal 功能） |
+| 選用 | MCP for Blender：在即時 Blender 裡調整道具烘焙參數 |
 
-路徑若與上述不同，需要修改 `pipeline/` 內的腳本與 `AGENT.md`。
+把 `examples/t2s.config.json` 複製到 repo 根目錄並填入 Blender、引擎執行檔與引擎專案的路徑。
 
 ## 使用方式
 
-建議的用法是讓 Claude Code 之類的 agent 依照 `AGENT.md` 執行，因為列物件、寫 prompt、審圖、組裝場景都需要判斷：
+建議讓 Claude Code 之類的 agent 依照 `AGENT.md` 執行（列物件、寫 prompt、審圖、擺位都需要判斷）：
 
-> 依照 AGENT.md，只看 `<場景描述.md>` 的文字，做出「區域 A」的 Blender 場景。
+> 依照 AGENT.md，只看 `<場景描述.md>` 的文字，把「區域 A」做成 Unreal 關卡。
 
-文字描述寫得越具體越好：每個空間的寬 × 深 × 高、出入口通往哪裡、地面 / 牆面 / 天花的材質、固定物件靠哪面牆、標示文字的確切內容、光源。沒寫到的部分由 agent 自行決定。
-
-2D 圖與 3D 模型的部分也可以手動分兩段執行（批次模式，同一個 prompt 換種子生成 4 張，不做 prompt 迭代），前提是 `scene.json` 已經寫好：
+也可以手動逐步執行，每一步都是一個指令（`-Project` 指向放 `assets.json` / `layout.json` 的資料夾）：
 
 ```powershell
-.\pipeline\run_all.ps1 generate    # 候選圖 + 對照表
-# 看 work\objects\<id>\sheet.png，寫 work\selection.json
-.\pipeline\run_all.ps1 models      # 去背 + TRELLIS
+.\pipeline\run.ps1 images    -Project D:\MyScene   # FLUX 候選圖 → 看 sheet.png、寫 work\selection.json
+.\pipeline\run.ps1 models    -Project D:\MyScene   # 去背 + TRELLIS
+.\pipeline\run.ps1 build     -Project D:\MyScene -Shots
+#   = 共用貼圖、材質、貼花、layout、模組件、道具烘焙、layout（實際面數）、匯入引擎並截圖
 ```
 
-`run_all.ps1` 是依手動步驟整理的，尚未完整執行過一次。Blender 場景沒有腳本可跑：模型產生後，請 agent 依 `AGENT.md` 步驟 5 透過 Blender MCP 組裝。
+單獨的步驟：`materials`、`decals`、`layout`、`kit`、`props`（`-Retexture` 只重做髒污與匯出、`-Ids a,b` 只做部分）、`engine`。
+目標引擎由 `assets.json` 的 `"target": {"engine": "unreal" | "unity"}` 決定，改這一個欄位再跑 `engine` 就換引擎。
+
+範例專案：`examples/assets.json` 與 `examples/layout.json`（戶外廣場 → 大廳 → 走廊 → 辦公室）。
 
 ## 輸出
 
-| 檔案 | 內容 |
+| 位置 | 內容 |
 |---|---|
-| `scene.blend` | 完整場景，貼圖已打包；每個空間有一台第一人稱相機 `Cam_<空間>`。它是由 agent 直接在 Blender 裡建的，沒有可重跑的建置腳本 |
-| `work/renders/view_<空間>.png` | 各空間的第一人稱渲染 |
-| `work/renders/view_overview.png` | 全區俯瞰 |
-| `work/renders/contact_sheet.png` | 以上全部拼成一張 |
-| `work/objects/<id>/` | 每個物件的候選圖、prompt 紀錄、去背圖、GLB |
+| `export/props/SM_<id>/` | `SM_<id>.fbx`（LOD0 + `UCX_` 碰撞）、`SM_<id>_LOD<n>.fbx`、`T_SM_<id>_{BC,N,ORM,MASK}.png`、`asset.json`、`preview.png` |
+| `export/props/bake_report.md` | 每個道具的面數、LOD、貼圖密度、烘焙異常與狀態（`ok` / `check` / `review` / `fail`） |
+| `export/kit/` | 模組件、`preview_<set>.png`、座標軸校正件 `SM_T2S_Axes` |
+| `export/materials/`、`export/decals/`、`export/shared/` | 表面材質、貼花、macro variation 與細節法線 |
+| `export/level.json` | 引擎中立的關卡：實例、燈、貼花、探針範圍、鏡頭、PlayerStart、光照與後處理設定 |
+| `export/budget.json` | 每個空間的三角面、實例、貼花、半透明、重疊陰影燈；全場景貼圖記憶體與材質數 |
+| `export/shots/<engine>/` | 每台審查鏡頭的引擎截圖 |
+| Unreal `/Game/T2S/` | `Master/`、`Materials/`、`Props/`、`Kit/`、`Decals/`、`Maps/<name>` |
+| Unity `Assets/T2S/` | `Materials/`、`Prefabs/`、`Scenes/<name>.unity` |
 
-## 效能參考（RTX 3060 12 GB，模型放在 HDD）
+重跑是安全的：未變更的資產會跳過，關卡中由管線產生的物件會重建，手動加入的不受影響。
+
+## 效能參考（RTX 3060 12 GB）
 
 | 階段 | 耗時 |
 |---|---|
-| FLUX.2 klein 4B，1 MP、4 步 | 冷啟動首張約 2–4 分鐘，之後約 15 秒/張 |
-| TRELLIS.2（512 管線） | 載入約 5 分鐘，每個物件 1–4 分鐘；`1024_cascade` 更久 |
-| Blender 組裝（agent 透過 MCP 逐步建模、檢查、調整） | 視範圍而定，十幾個空間的區域需要數小時；單次渲染約 15 秒 |
+| FLUX.2 klein 4B，1 MP、4 步 | 冷啟動首張 2–4 分鐘，之後約 15 秒/張 |
+| TRELLIS.2（512 管線） | 載入約 5 分鐘，每個物件 1–4 分鐘 |
+| Blender 道具烘焙（GPU） | 每個 5–15 秒；`-Retexture` 約 2 秒 |
+| 模組件 | 一整套 < 30 秒 |
+| Unreal 匯入 + 關卡 + 截圖 | 新專案第一次編譯著色器 5–15 分鐘，之後 1–3 分鐘 |
+| Unity 匯入 + 場景 + 截圖 | 第一次 3–5 分鐘，之後約 1 分鐘 |
 
 ## 已知限制
 
-- **透明物件**：TRELLIS.2 會把玻璃重建成不透明的白色實體，玻璃容器、玻璃翼板要在 Blender 用玻璃材質建，內容物另外生成。
-- **文字**：TRELLIS.2 會把文字重建成亂碼，所以海報、螢幕畫面用貼圖薄板，標示文字用 Blender 文字物件。
-- **姿態**：生成的模型是一體的，無法事後調整可動部位（例如堆高機的貨叉高度）；需要特定姿態時要在 prompt 寫明，或拆成多個物件。
-- **細節精度**：TRELLIS 預設用 512 管線並減面到數萬面，適合場景道具；需要近看的物件可以逐一改用 `1024_cascade`，但在 12 GB VRAM 上實心方塊與枝葉類可能因記憶體不足而失敗。
-- **物件是模型自己想像的**：沒有參考圖，同一段 prompt 換種子會得到不同設計；風格一致性靠 prompt 與審核維持。
-- **場景不可重現**：格局、擺位、材質、燈光是 agent 每次現做的，同一份文字跑兩次結果不會相同；`scene.blend` 是唯一的成果，請自行備份。
-- **VRAM**：ComfyUI 與 TRELLIS 不能同時執行。
-- **磁碟**：模型合計約 30 GB；WSL 內的 `df` 顯示的是虛擬磁碟上限，請以 Windows 磁碟的實際剩餘空間為準。
+- **植被與地形不在管線內**：草、灌木、樹林、地形起伏請用 Unreal Foliage / PCG / Landscape 或 Unity Terrain；總結會列出需要補的位置。
+- **模組化格局**：空間對齊格線（預設 2 m），牆只有直角；斜牆、曲面、樓梯要另外做成道具或在引擎裡補。門洞只有門框，門扇與開關門互動需在引擎裡加。
+- **TRELLIS 的限制照舊**：透明物件會變成白色實體、文字會變亂碼、姿態無法事後調整；做法見 AGENT.md 步驟 0。
+- **去光影只能減輕**：AI 生成的貼圖常烘進光影，`delight` 只能壓平大尺度明暗。
+- **貼圖重複**：表面材質的 `tile_m` 要能整除模組尺寸，否則每個模組會出現接縫；macro variation 只在 Unreal 主材質裡（Unity 端靠貼花與散佈打破重複）。
+- **Unity 的燈光強度**：URP / Built-in 沒有物理單位，流明是近似換算；HDRP 使用物理單位。Unity 端的 GI 需要烘焙（`-t2sBake` 或手動）。
+- **Unreal 截圖需要編輯器視窗**：匯入器會開啟編輯器、跑完自動關閉，期間不要關掉它。
+- **模型是想像的**：沒有參考圖，風格一致性靠 prompt 與審核維持；同一份文字跑兩次，道具外觀會不同（格局與擺位由 `layout.json` 決定，可以重現）。
 
 ## 授權注意
 
 - FLUX.2 klein 只使用 **4B（Apache 2.0）**；9B 是非商用授權，腳本裡沒有提供。
 - TRELLIS.2、RMBG-2.0 各有自己的授權條款，使用前請自行確認。
-- 貼圖只從 [Poly Haven](https://polyhaven.com) 下載，全部為 CC0。
+- 表面材質只從 [Poly Haven](https://polyhaven.com) 與 [ambientCG](https://ambientcg.com) 下載，全部為 CC0。
 - 場景文字描述與其中的設定內容，著作權由提供者自行負責。

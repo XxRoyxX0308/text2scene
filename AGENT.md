@@ -1,489 +1,463 @@
-# AGENT.md — 文字描述 → Blender 場景：agent 執行手冊
+# AGENT.md — 文字描述 → 遊戲引擎場景：agent 執行手冊
 
-你是執行這條管線的 agent。照本文件由上而下做，每一步都有明確的輸入、輸出與通過條件。
-這條管線**沒有參考圖**：場景的格局、物件清單、每個物件的 prompt 都由你讀文字描述後自己決定。
-「看圖」的步驟（審核 2D 圖、檢視 3D 模型、檢查場景）由你親自用 Read 或 `look` 判斷，不要跳過，也不要用檔案大小或程式輸出代替目視檢查。
+你是執行這條管線的 agent。照本文件由上而下做，每一步都有輸入、輸出與通過條件。
+管線**沒有參考圖**：格局、物件清單、每個物件的 prompt 都由你讀文字描述後決定。
+看圖的步驟（2D 候選圖、道具預覽、模組件預覽、引擎審查鏡頭）由你親自 Read 或 `look`，不要用檔案大小或程式輸出代替目視。
+
+**核心分工**：資產在 Blender 做（無介面批次），場景在遊戲引擎組（Unreal 或 Unity），兩者之間只靠 `export/` 這個引擎中立的資料夾。
+**場景不在 Blender 裡組裝**：不要把整個場景建成一個 .blend 再匯出（無法 instancing、無法剔除、光照到引擎全部不一樣、改一張桌子要重來）。
+
+美術與效能的數字標準在 [docs/STANDARDS.md](docs/STANDARDS.md)，本文件只寫流程。
 
 ## 0. 任務定義
 
 | | |
 |---|---|
-| **輸入** | 一份場景文字描述（例如專案根目錄的 `<場景描述>.md`）與要做的範圍（例如「區域 A」）；使用者可能另外指定一個補充資料夾（世界觀、標誌圖檔） |
-| **輸出** | `scene.blend`（貼圖已打包）、每個空間的第一人稱渲染 `work/renders/view_<空間>.png`、`view_overview.png`、`contact_sheet.png` |
-| **完成條件** | 範圍內每個空間都建出來且彼此連通；文字寫到的固定物件、標示文字、光源都在場景裡；物件走 FLUX.2 → TRELLIS.2（每個物件至少審核過 4 張 2D 圖、每個 3D 模型都檢視過並已減面）；**玩家看得到的地方沒有大面積的空平面**；每個空間至少有一張第一人稱渲染 |
-| **回報** | 結尾交付一份總結：物件清單與做法、哪些不合格及原因、與文字描述的差異、耗時 |
+| **輸入** | 一份場景文字描述（`<場景描述>.md`）與範圍（例如「區域 A」）；`assets.json` 的 `target.engine` 決定引擎（`unreal` / `unity`），使用者也可能口頭指定 |
+| **輸出** | `export/`（引擎中立的資產包與 `level.json`）、引擎裡的關卡（Unreal `/Game/T2S/Maps/<name>`，Unity `Assets/T2S/Scenes/<name>.unity`）、每台審查鏡頭的截圖 `export/shots/<engine>/*.png` |
+| **完成條件** | 範圍內每個空間都建出來且連通；文字寫到的固定物件、標示、光源都在；道具報告沒有未處理的 `check` / `fail`；`budget.json` 沒有超標或超標項目已說明；每個空間至少一張審查截圖且你看過 |
+| **回報** | 總結：空間表、物件表與做法、報告中被標記的項目與處理、與文字的差異、效能數字、耗時 |
 
-路徑約定：`$P` = 專案在 WSL 內的路徑（例如 `/mnt/d/text2scene`）；`$PW` = 同一路徑的 Windows 寫法。
+路徑約定：`$P` = 專案資料夾在 WSL 內的路徑（例如 `/mnt/d/MyScene`），`$PW` = 同一路徑的 Windows 寫法；
+`$R` = 本 repo（在 `wsl -e bash -lc '...'` 裡用 `/mnt/...` 寫法，在 PowerShell 與 Blender 裡用 Windows 寫法）。
+專案資料夾（`$PW`）放 `assets.json`、`layout.json`、`work/`、`export/`；腳本都在 `$R/pipeline/`。
 
 ## 1. 環境與硬性限制
 
-| 元件 | 位置 | 呼叫方式 |
+| 元件 | 位置 | 用途 |
 |---|---|---|
-| WSL Ubuntu | 使用者虛擬磁碟在 D 槽（HDD） | `wsl -e bash -lc '...'` |
-| TRELLIS.2 | `~/TRELLIS.2`，conda env `trellis2` | 由 `pipeline/trellis_loop.sh` 呼叫 |
-| ComfyUI + FLUX.2 klein 4B | `~/ComfyUI`，conda env `comfyui` | `pipeline/comfy_start.sh` / `comfy_stop.sh` |
-| Blender 5.2 | 使用者開著的 Blender，已啟用 MCP for Blender 外掛 | Blender MCP 工具：`get_addon_status`、`get_scene_info`、`execute_blender_code`、`look` |
+| WSL Ubuntu + TRELLIS.2 | `~/TRELLIS.2`，conda env `trellis2` | 去背、2D → 3D |
+| ComfyUI + FLUX.2 klein 4B | `~/ComfyUI`，conda env `comfyui` | 文字 → 2D 圖 |
+| Blender 5.x | `t2s.config.json` 的 `blender` | **無介面批次**：道具烘焙、模組件 |
+| Blender MCP（選用） | 使用者開著的 Blender | 只用來**調參**（步驟 5.1），不用來組場景 |
+| Unreal 5.x 或 Unity 6 | `t2s.config.json` | 匯入與組關卡 |
+| Windows Python 3 + numpy + Pillow | | 材質、貼花、layout |
 
-硬性限制，違反會出事：
+硬性限制：
 
-1. **GPU 只有 12 GB，ComfyUI 與 TRELLIS/RMBG 不能同時佔用。** 生成 2D 圖期間開 ComfyUI；進入去背或 TRELLIS 之前一定先跑 `comfy_stop.sh`。
+1. **GPU 只有 12 GB，ComfyUI 與 TRELLIS/RMBG 不能同時佔用。** 進入去背或 TRELLIS 前一定先跑 `comfy_stop.sh`。GPU 被佔用時不要跑 Blender 烘焙或引擎截圖。
 2. **不要在 `trellis2` 環境安裝或升級任何套件。**
-3. **下載或產生大檔前，先看 Windows 磁碟實際剩餘空間**（Git Bash：`df -h /c /d`）。WSL 內的 `df` 顯示的是虛擬上限，不可信。
-4. **不要用會比對到自己的 `pkill -f` / `pgrep -f`**（指令字串本身含有樣式時會殺掉自己）。用 `comfy_stop.sh`，或把樣式第一個字母包成 `[x]`。
-5. **不要印出 `~/.cache/huggingface/token` 的內容**，也不要列出含有該 token 的程序指令列。
-6. 長時間工作（TRELLIS）用背景執行，並監看 `work/trellis.log` 的 `[done]` / `[FAIL]` 行。
-7. **Blender 場景只透過 Blender MCP 建立與修改。** 不要在磁碟上寫 `.py` 建置腳本，也不要用 `blender -b -P` 在背景跑；所有建模、擺位、材質、燈光、渲染都由你用 `execute_blender_code` 在使用者開著的 Blender 裡一步一步做，用 `look` 看結果。MCP 連不上時停下來告訴使用者，不要改走背景 Blender。
-8. ComfyUI 或 TRELLIS 佔用 GPU 期間，`look` 只用 `solid` / `wireframe` / `material` 著色，不要用 `rendered`，也不要渲染。
-9. 不要在 MCP 裡呼叫 `bpy.ops.wm.read_factory_settings` 或 `read_homefile`：會重置工作階段並中斷 MCP。要清空場景就逐一刪除物件與資料。
-10. **FLUX 只用 klein 4B（Apache 2.0，可商用），不要改回 9B。** TRELLIS 預設用 512 管線；檢視後覺得某個模型不夠精細，可以對該物件改用 `1024_cascade`（見步驟 4）。
+3. **下載或產生大檔前先看 Windows 磁碟實際剩餘空間**（Git Bash：`df -h /c /d`）；WSL 內的 `df` 不可信。
+4. **不要用會比對到自己的 `pkill -f` / `pgrep -f`**；用 `comfy_stop.sh`，或把樣式第一個字母包成 `[x]`。
+5. **不要印出 `~/.cache/huggingface/token`**，也不要列出含有它的程序指令列。
+6. 長時間工作（TRELLIS、Blender 批次、引擎匯入）用背景執行，看日誌的結尾行。
+7. **FLUX 只用 klein 4B（Apache 2.0）**，不要改回 9B。
+8. **引擎專案是使用者的**：匯入器只寫 `/Game/T2S`（Unreal）或 `Assets/T2S`（Unity）。第一次對某個引擎專案匯入前先告訴使用者會寫入哪裡；不要動其他資料夾、專案設定或外掛（需要時請使用者決定）。
+9. 引擎匯入會開編輯器視窗（Unreal 用 `-ExecCmds` 跑完自己關），執行前告訴使用者不要關掉它。
+10. 在 Blender MCP 裡不要呼叫 `read_factory_settings` / `read_homefile`（會中斷 MCP）；`20_bake_props.py` 的 `tune()` 已經改用獨立的 `T2S_Tune` 場景。
+11. 下載 CC0 材質前告訴使用者要下載什麼、來源、大小（`10_materials.py size`）；預設 2k，大面積近看的才用 4k。
 
-時間參考（RTX 3060）：ComfyUI 冷啟動後第一張圖 2–4 分鐘，之後約 15 秒/張；TRELLIS 載入約 5 分鐘，512 管線每個物件 1–4 分鐘。
+時間參考（RTX 3060）：FLUX 冷啟動 2–4 分鐘、之後約 15 秒/張；TRELLIS 載入約 5 分鐘、每個物件 1–4 分鐘；
+Blender 道具烘焙每個約 5–15 秒；模組件一整套 < 30 秒；Unreal 第一次開新專案編譯著色器 5–15 分鐘、之後匯入 1–3 分鐘。
 
 ## 2. 流程總覽
 
 ```
-步驟 0  確認 Blender MCP 可用 → 讀文字描述 → 寫下空間配置與物件清單
-步驟 1  寫 scene.json（物件與 prompt）
-步驟 2  逐物件迭代生成 2D 圖：生成 → 看圖 → 決定是否改 prompt → 再生成（至少 4 張）
-步驟 3  寫 work/selection.json → 02_select_matte.py matte → 檢查去背
-步驟 4  trellis_loop.sh → 用 MCP 把每個 GLB 匯入 Blender → look 逐一檢視 → 減面
-步驟 5  用 MCP 組裝場景：配置 → 建築 → 擺放模型 → 填滿空面 → 材質 → 燈光 → 相機與渲染
-步驟 6  總結回報
+步驟 0  讀文字 → 空間配置（格線）、物件清單、材質清單、光線計畫
+步驟 1  寫 assets.json（目標引擎、材質、模組件、道具、貼花）與 layout.json 的 rooms（先只有格局）
+步驟 2  灰盒：layout → kit → engine，確認格局、動線、比例（此時沒有道具也沒關係）
+步驟 3  2D 圖：逐物件迭代生成並審核（道具、平面影像、貼花）
+步驟 4  選圖、去背、TRELLIS
+步驟 5  道具：MCP 調參（代表性模型）→ 寫入 preset → 無介面批次 → 看報告，只處理被標記的
+步驟 6  材質與貼花：CC0 掃描 / 平塗材質、貼花去背
+步驟 7  完成 layout.json：道具擺位、散佈、貼花、燈光、後處理、鏡頭
+步驟 8  layout（第二次，拿到真實面數）→ engine 匯入 → 審查截圖 → 對照文字修正（最多 3 輪）
+步驟 9  總結回報
 ```
 
-步驟 1–4 與步驟 5 可以交錯：建築不需要 GPU，等 TRELLIS 的時候就可以先在 Blender 裡建。
-組裝時發現還缺物件，就回步驟 1 把它加進 `scene.json` 再跑一輪（已完成的物件會自動跳過）。
+步驟 2 不需要 GPU，可以在等 TRELLIS 時做。組裝時發現缺物件就回步驟 1 補，已完成的會自動跳過。
+`pipeline/run.ps1 <stage>` 把每一步包成一個指令（`images`、`models`、`materials`、`decals`、`layout`、`kit`、`props`、`engine`、`build`）。
 
-## 3. 步驟 0：確認 MCP、讀文字、定出計畫
+## 3. 步驟 0：讀文字、定出計畫
 
-1. **先確認 MCP 能用。** `get_addon_status`、`get_scene_info`；場景裡若只有 Blender 預設的 Cube / Light / Camera，用 `execute_blender_code` 把預設 Cube 刪掉，確認指令真的生效。
-   場景裡若已有上一次的成果，先看清楚再決定接著做還是清掉重來（清空前要問使用者）。
-2. **讀文字描述。** 先讀文件開頭的使用說明、共用元件與空間連接關係，再讀範圍內每個空間的小節。文件很長時分段讀，不要只讀標題。
-   使用者有指定補充資料夾時，需要更細的設定（公司標誌、世界觀、色彩）就去那裡查；真實的標誌圖檔直接拿來用，不要另外生成。
-3. **對每個空間記下**：寬 × 深 × 高、出入口與各自通往哪裡、地面 / 牆面 / 天花的材質與分割、固定物件與位置、標示文字的確切內容、光源、狀態細節。
-4. **定出整體配置。** 依連接關係把所有空間排進同一個世界座標（見步驟 5.1）。文字沒寫的尺寸與位置由你決定，但要讓門對得上門、走廊接得起來。
-5. **列出物件清單**，分成三類：
+1. 讀文字描述：先讀使用說明、共用元件、空間連接關係，再讀範圍內每個空間的小節。文件長就分段讀。
+2. 每個空間記下：寬 × 深 × 高、出入口與通往哪裡、地面 / 牆面 / 天花材質與分割、固定物件與位置、標示文字、光源（位置、色溫、明暗）、狀態（新、使用中、破損）。
+3. **定出格線配置**。所有空間放進同一個世界座標（+X 東、+Y 北，單位公尺），尺寸與原點對齊模組格（`kit.module`，預設 2 m）：
+   - 文字尺寸不是模組倍數時取最接近的倍數，在總結裡註明差異。
+   - 相鄰空間共用一條格線；門洞中心放在模組中點（`at` 用模組的奇數半格：1、3、5…，模組 2 m 時）。
+   - 不規則空間用多個矩形（`rects`）。
+4. **分類物件清單**：
 
    | 類別 | 例子 | 做法 |
    |---|---|---|
-   | 生成物件 | 家具、設備、植物、雕塑、車輛、道具 | FLUX.2 → TRELLIS.2（`scene.json`） |
-   | 平面影像 | 海報、螢幕畫面、照片、畫作、標語牆 | FLUX.2 生成正面圖，Blender 做成薄板（`"mode": "image_slab"`） |
-   | 建築與規則幾何 | 地板、牆、天花、門窗、樓梯、櫃台、層架、置物櫃、花台、玻璃容器、文字標示 | 步驟 5 直接在 Blender 建，不寫進 `scene.json` |
+   | 建築 | 牆、地、天花、門洞、窗、柱、樓梯以外的結構 | 模組件（`kit`），由 `rooms` 自動產生 |
+   | 生成道具 | 家具、設備、車輛、雕塑、盆栽、燈具 | `assets.json` 的 `props` → FLUX → TRELLIS → Blender 烘焙 |
+   | 平面影像 | 海報、螢幕畫面、畫作、標語 | `props` 加 `"mode": "image_slab"` |
+   | 貼花 | 污漬、水痕、裂縫、刮痕、手印、塗鴉 | `decals` |
+   | 表面材質 | 混凝土、磨石、塗裝、金屬、玻璃 | `materials`（CC0 掃描或平塗） |
+   | 植被、大片地形 | 草地、灌木叢、樹林、地形起伏 | **不在管線內**：交給引擎的 Foliage / PCG / Landscape（Unity Terrain），在總結中列出要使用者補的位置 |
 
-**選物件的規則**
+5. **選物件的規則**
+   - 文字寫到的一定要有；另外補讓空間可信的東西（垃圾桶、滅火器、推車、插座、出風口、紙箱）。
+   - 重複出現的同款物件只列一次，在 `layout.json` 擺多個實例（引擎自動 instancing）。
+   - 一個中等規模的區域（十幾個空間）通常 30–60 種道具、5–15 種貼花、6–15 種表面材質。
 
-- 文字寫到的物件一定要有；另外自己補上讓空間可信的東西（垃圾桶、滅火器、盆栽、推車、飲水機、清潔工具、影印機……）。場景要複雜，寧可多不要少。
-- 整個範圍至少 10 種生成物件；一個中等規模的區域（十幾個空間）通常需要 40 種以上。
-- 重複出現的同款物件只列一次，步驟 5 用同一個模型的複本擺放。
-- 清單不必一次列完：一邊組裝一邊想還缺什麼，缺了就補。
-
-**TRELLIS 做不好的東西，一開始就改用別的做法**（都是實際踩過的）：
+**TRELLIS 做不好的東西，一開始就改做法**（都是實際踩過的）：
 
 | 物件 | 會發生什麼 | 做法 |
 |---|---|---|
-| 透明玻璃容器、玻璃罩、水槽 | 變成不透明白色實心筒，裡面的東西消失 | 玻璃在 Blender 用玻璃材質建；內容物單獨當一個物件生成 |
-| 帶透明部件的物件（閘門的玻璃翼板、櫥窗） | 去背後透明部分變成不透明白色 | 生成時不要那個部件，改在 Blender 用玻璃材質補上 |
-| 需要特定姿態的機械（貨叉升起的堆高機） | 2D 圖常常還是預設姿態，3D 模型無法事後調整 | prompt 明寫姿態並在審核時確認；不行就拆成兩個物件（車體、貨叉與載物），在 Blender 裡組合 |
-| 由細環、細線組成的複合雕塑 | 細長構件遺失或黏在一起 | 主體生成，細環用 Blender 的 Torus / 曲線補 |
-| 鏡面金屬 | 烘焙貼圖帶入環境色（偏金、偏灰） | 形狀留用，材質換成 Blender 的金屬材質 |
-| 文字、字母 | 重建成亂碼 | `image_slab`，或用 Blender 文字物件 |
-| 會蔓延的東西：藤蔓、樹根、垂藤、爬牆植物、蕨類、灌叢、貼在牆面或地板的生物組織 | 重建成一整塊（像一捆樹枝或一顆球），蕨葉變成厚片、葉子碎裂，底部還會帶一團土 | 不要當成單一物件生成。用步驟 5.8 的程式生長，直接長在場景幾何上；TRELLIS 只留給緊湊的團塊（藤葉堆、苔墊、肉塊） |
+| 透明玻璃、玻璃罩、水槽 | 變成不透明白色實心 | 玻璃用模組件的窗或引擎材質；內容物單獨生成 |
+| 帶透明部件的物件 | 透明部分變成白色 | 生成時不要那個部件，在引擎裡補 |
+| 需要特定姿態的機械 | 姿態不對且無法事後調整 | prompt 寫明姿態並審核；不行就拆成兩個物件 |
+| 細環、細線組成的雕塑 | 細構件遺失或黏在一起 | 主體生成，細件在 Blender 或引擎補 |
+| 鏡面金屬 | 貼圖帶入環境色 | 形狀留用，在引擎換成金屬材質實例 |
+| 文字、字母 | 重建成亂碼 | `image_slab`，或引擎的文字元件 |
+| 蔓延的植物、樹根、藤蔓、蕨類 | 重建成一整塊 | 引擎 Foliage / PCG；牆面上的苔與污漬用貼花 |
+| 大型平面（地毯、桌面以外的平板） | 厚度不對、邊緣破 | 直接用模組件或在 Blender 建簡單幾何 |
 
-**輸出**：你自己的空間配置筆記與物件清單（寫在對話裡即可，不需要另存檔案）。
+**輸出**：空間配置筆記與物件清單（寫在對話裡即可）。
 
-## 4. 步驟 1：撰寫 scene.json
+## 4. 步驟 1：assets.json 與 layout.json
 
-`scene.json` 只描述「要生成哪些物件」（步驟 2–4 的腳本會讀）；Blender 場景怎麼組裝不寫在這裡。
+完整範例在 [examples/assets.json](examples/assets.json)、[examples/layout.json](examples/layout.json)，從那裡複製再改。
+
+### 4.1 assets.json
 
 ```jsonc
 {
-  "description": "一句話描述場景：哪個區域、來源文件、整體風格",
-  "camera": {"hfov_deg": 90, "height_m": 1.6},     // 第一人稱相機的設定，步驟 5.7 使用
-  "generation": {
-    "candidates": 4,            // 批次模式每個物件的張數
-    "megapixels": 1.0,
-    "suffix": "The single object alone, centered, the whole object fully inside the frame with empty margin on all sides. Three-quarter view from slightly above eye level. Pure white seamless background, flat even studio lighting, no cast shadow, no floor, no people. Photorealistic product photograph, clean brand-new condition."
-  },
-  "objects": [
-    {
-      "id": "office_chair",                // 小寫英文加底線，也是資料夾名與 Blender 物件名
-      "prompt": "A modern black ergonomic office task chair with a black mesh backrest, ...",   // 英文，只描述物件本身
-      "height_m": 1.0,                     // 真實高度，步驟 5.3 縮放用
-      "trellis": {"faces": 30000, "texture": 2048}
-    },
-    {
-      "id": "poster_safety",
-      "mode": "image_slab",
-      "aspect": 0.71,                      // 寬 ÷ 高
-      "suffix": "Flat straight-on print filling the whole frame edge to edge, no border, no perspective.",
-      "prompt": "A minimalist workplace safety poster ..."
-    }
-  ]
+  "description": "一句話：哪個區域、整體風格",
+  "target": {"engine": "unreal", "unity_pipeline": "urp"},     // unreal | unity
+  "generation": {"candidates": 4, "megapixels": 1.0,
+                 "suffix": "...白底單一物件...", "decal_suffix": "...白底俯拍的痕跡..."},
+  "materials": [ ... ],      // 4.2
+  "kit": { ... },            // 4.3
+  "props": [ ... ],          // 4.4
+  "decals": [ ... ],         // 4.5
+  "bake_presets": { },       // 步驟 5.1 調好的參數寫在這裡
+  "budgets": { }             // 覆寫 docs/STANDARDS.md 的預算
 }
 ```
 
-物件的可選欄位：
+### 4.2 materials（表面材質）
 
-| 欄位 | 用途 |
+| 欄位 | 說明 |
 |---|---|
-| `height_m` | 物件的真實高度（公尺）；寬的東西可改記 `width_m`。只是給你自己擺位時讀的紀錄，腳本不會用 |
-| `mode: "image_slab"` | 平面影像：不跑 TRELLIS，步驟 5 用 2D 圖做成薄板 |
-| `aspect` | 圖片的寬 ÷ 高（預設 1）。`image_slab` 依實際比例設定；細高或扁長的立體物件也可以設，讓物件佔滿畫面 |
-| `suffix` | 取代 `generation.suffix`。`image_slab` 一定要設（共用 suffix 是給白底立體物件用的） |
-| `seed_base` | 種子起點（預設 1000），想整組重來時換一個 |
-| `trellis.faces` | GLB 的目標面數（預設 30000），依步驟 4 的減面表設定 |
-| `trellis.texture` | 貼圖邊長（預設 2048）；小道具用 1024 |
-| `trellis.pipeline_type` | 預設 `"512"`；模型不夠精細時對該物件設 `"1024_cascade"` 重跑 |
-| `trellis.seed` | 3D 重做時換種子 |
-| `status: "rejected"` | 放棄這個物件（TRELLIS 會跳過），並用 `note` 寫明原因與替代做法 |
+| `id` | 名稱，模組件與 layout 用它引用 |
+| `source` | `polyhaven:<id>`、`ambientcg:<id>`（CC0 掃描，用 `10_materials.py search` 找）、`flat`（塗裝、烤漆）、`glass` |
+| `res` | `1k` / `2k` / `4k`（掃描用） |
+| `tile_m` | 幾公尺鋪一次；能整除模組尺寸 |
+| `color` / `roughness` / `metallic` / `noise` | `flat` 與 `glass` 用；`noise` 是顏色與粗糙度的擾動量（預設 0.06） |
+| `tint`、`roughness_scale`、`normal_strength` | 掃描材質的微調 |
+| `macro`、`detail` | 引擎端打破重複的強度（預設 0.12 / 0.4） |
+| `opacity` | `glass` 用 |
 
-**寫 prompt 的原則**（沒有參考圖，prompt 是唯一的資訊來源）
+### 4.3 kit（模組件）
 
-- 用英文，一段話，只寫這一個物件：種類、形狀、材質、顏色、關鍵部件、狀態（全新 / 老舊 / 損壞），並寫出大致尺寸（「about 1.2 metres tall」），比例會比較對。
-- 風格要跟空間一致：同一個區域的物件用同一套材質與色彩語彙（從文字描述的視覺體系章節取）。
-- 白底、平光、三分之四視角這類共用要求放在 `generation.suffix`，不要每個 prompt 重複寫。
-- 細長、鏤空的物件要求「chunky solid forms」「thick」之類的描述，3D 重建才不會斷。
-- 不要在物件上要求文字或標誌；需要的話之後在 Blender 貼上去。
-- `image_slab`：描述畫面內容本身，suffix 要求正面、滿版、無邊框、無透視；螢幕畫面另外寫明底色。
-
-**輸出**：`scene.json`。**通過條件**：JSON 可解析；每個物件都有 `id` 與 `prompt`；`image_slab` 都有 `aspect` 與 `suffix`。
-
-## 5. 步驟 2：迭代生成 2D 圖（核心步驟）
-
-啟動 ComfyUI（一次即可，整個步驟 2 期間保持開啟）：
-
-```bash
-wsl -e bash -lc 'bash $P/pipeline/comfy_start.sh'      # 印出 COMFY_READY 才算成功
+```jsonc
+"kit": {
+  "module": 2.0, "wall_thickness": 0.2, "bevel": 0.012,
+  "door": {"width": 1.2, "height": 2.3},
+  "window": {"width": 1.5, "height": 1.8, "sill": 0.6},
+  "sets": {
+    "alsi": {"wall": "paint_white", "trim": "steel_brushed", "floor": "terrazzo", "ceiling": "ceiling_panel",
+             "glass": "glass_clear", "exterior": "concrete", "baseboard": 0.1}
+  }
+}
 ```
 
-對**每個物件**執行下面的迴圈，一次只生成一張：
+一個 `set` 是一套視覺語彙（例如地表 / 地下淺層 / 深層各一套）。材質是預設值，`rooms` 可逐個空間覆寫。
+需要哪些件（牆的高度、門、窗、柱）由 `30_layout.py` 從 `rooms` 算出，你不用列。
+
+### 4.4 props（道具）
+
+| 欄位 | 說明 |
+|---|---|
+| `id`、`prompt` | 小寫英文加底線；prompt 用英文，只描述物件本身（見步驟 3 的原則） |
+| `height_m` / `width_m` / `depth_m` | 真實尺寸（擇一），烘焙時縮放用，**必填** |
+| `category` | `hero` / `prop` / `small`：決定貼圖密度、LOD 數、預設 preset |
+| `condition` | `new` / `used` / `worn` / `ruined`：髒污與磨損程度；或直接給 `wear` / `dirt` / `rough_var` / `bare_metal` |
+| `preset`、`bake` | 烘焙參數組與逐物件覆寫（步驟 5） |
+| `yaw_fix` | 模型正面不是朝 -Y 時，轉幾度（看 preview.png 決定） |
+| `collision` | `box`（預設）/ `convex` / `none` |
+| `emissive` | 自發光強度（螢幕、燈箱） |
+| `trellis` | `faces`（LOD0 目標面數）、`texture`、`high_faces`（主角道具設 200000–300000 以烘焙法線）、`pipeline_type`、`seed` |
+| `mode: "image_slab"` + `aspect`、`frame` | 平面影像；需要自己的 `suffix`（正面、滿版、無邊框、無透視） |
+| `status: "rejected"` + `note` | 放棄並寫明替代做法 |
+
+### 4.5 decals（貼花）
+
+| 欄位 | 說明 |
+|---|---|
+| `id`、`prompt` | 描述痕跡本身（稀疏、邊緣柔和），共用 `decal_suffix` 要求白底俯拍 |
+| `size_m` | 實際尺寸 [寬, 高] |
+| `alpha` | `luma`：白底上的深色痕跡（污漬、水痕、裂縫、煤灰）；`matte`：有明確形狀或淺色的（紙張、油漆、標誌、落葉），走 RMBG 去背 |
+| `roughness`、`opacity`、`normal_strength` | 水漬粗糙度低（0.2），灰塵高（0.8） |
+
+## 5. 步驟 2：灰盒
+
+先只寫 `layout.json` 的 `rooms`（加上最基本的 `lighting`），跑：
+
+```powershell
+.\pipeline\run.ps1 layout -Project $PW     # 會印出需要的模組件數與警告
+python $R\pipeline\12_shared.py $PW
+python $R\pipeline\10_materials.py build $PW
+.\pipeline\run.ps1 kit -Project $PW
+.\pipeline\run.ps1 engine -Project $PW -Shots
+```
+
+- 看 `export/kit/preview_<set>.png`：每種件都在、門窗方向正確。
+- 看審查截圖：格局、動線、門洞位置、天花高度與文字一致；沒有空間重疊（`30_layout.py` 會警告 overlap）。
+- 匯入器第一步會匯入 `SM_T2S_Axes` 並檢查座標軸；出現 `axis calibration MISMATCH` 就停下來，不要繼續組關卡。
+
+### 5.1 layout.json 的 rooms
+
+```jsonc
+{"id": "LOBBY", "kit": "alsi", "origin": [0, 0], "yaw": 0, "size": [12, 10, 5],
+ "openings": [{"wall": "S", "at": 7, "kind": "door", "to": "PLAZA"},
+              {"wall": "S", "at": 1, "kind": "window"},
+              {"wall": "E", "at": 5, "kind": "open", "width": 2, "height": 3.0, "to": "CORR"}],
+ "floor": "terrazzo"}          // wall / ceiling / trim / exterior / glass 也可覆寫
+```
+
+- `origin` 是空間西南角（`[x, y]` 或 `[x, y, z]`，多樓層用 z）；`yaw` 只能是 90 的倍數；`size` = [寬(X), 深(Y), 高]。
+- 牆、門、窗以空間自己的座標描述：`wall` 是 `S`/`N`/`W`/`E`，`at` 是開口中心離該牆起點（南北牆從西端、東西牆從南端）的距離。
+- `kind`：`door`（門洞與門框，門扇另外當道具擺）、`window`、`open`（寬開口，`width` 為模組倍數，`height` 以上補橫樑）。
+- 兩個空間共用的牆只會建一次，兩面各用自己空間的牆面材質；只有一側有空間的牆，外側用 `exterior` 材質。
+- `outdoor: true`：沒有天花，戶外對戶外的邊界不建牆。`ceiling: false`：室內挑空。
+- 牆的轉角、T 字接點、自由端會自動補柱。
+
+## 6. 步驟 3：迭代生成 2D 圖（核心步驟）
+
+啟動 ComfyUI（整個步驟 3 期間保持開啟）：
+
+```bash
+wsl -e bash -lc 'bash $R/pipeline/comfy_start.sh'     # 印出 COMFY_READY 才算成功
+```
+
+對**每個物件**（道具、平面影像、貼花）一次生成一張，迭代到合格：
 
 ```
 loop:
-  生成一張   →  01_generate.py --next <id> [--prompt "..."] [--review-prev "..."]
-  Read 這張 cand_n.png
-  依「審核清單」寫下評語
-  若有缺點   →  針對缺點改寫 prompt，下一輪帶 --prompt 與 --review-prev
-  若已夠好   →  不改 prompt，下一輪只帶 --review-prev（換種子多拿一張備選）
-  結束條件   →  已有 ≥ 4 張，且其中至少 1 張通過審核清單
-  上限       →  8 張仍沒有合格的，選最接近的一張並在總結中註明
+  生成一張  →  01_generate.py <專案> --next <id> [--prompt "..."] [--review-prev "..."]
+  Read 這張 cand_n.png，依審核清單寫評語
+  有缺點    →  針對缺點改寫 prompt，下一輪帶 --prompt 與 --review-prev
+  已夠好    →  不改 prompt，下一輪只帶 --review-prev（換種子多拿一張備選）
+  結束      →  ≥ 4 張且至少 1 張合格；8 張仍不合格就選最接近的並在總結註明
 ```
-
-指令：
 
 ```bash
-# 第 1 張：用 scene.json 的 prompt
-wsl -e bash -lc 'python3 $P/pipeline/01_generate.py $P --next office_chair'
-
-# 之後每一張：先寫對上一張的評語；要改 prompt 才加 --prompt
-wsl -e bash -lc 'python3 $P/pipeline/01_generate.py $P --next office_chair \
-  --review-prev "good shape but the castors are cut off at the bottom edge" \
-  --prompt "A modern black ergonomic office task chair ... The chair is small in the frame with a wide empty margin below the castors."'
+wsl -e bash -lc 'python3 $R/pipeline/01_generate.py $P --next office_chair'
+wsl -e bash -lc 'python3 $R/pipeline/01_generate.py $P --next office_chair --review-prev "castors cut off" --prompt "... all five castors fully inside the frame ..."'
 ```
 
-- `--prompt` 省略時沿用上一張的 prompt（只換種子）。
-- 每次呼叫都會把 prompt、種子、耗時寫進 `work/objects/<id>/prompts.json`；`--review-prev` 的評語記在上一筆，形成完整的修改理由紀錄。
-- prompt 定稿後把它寫回 `scene.json`，讓 `scene.json` 與實際使用的 prompt 一致。
-- 物件很多、prompt 已經寫得穩的時候，可以先用批次模式一次生成（`01_generate.py $P [id ...]`，同一個 prompt 換種子 4 張），
-  看完 `sheet.png` 後只對不合格的物件走迭代。
+- 每次呼叫記錄在 `work/props/<id>/prompts.json`（貼花在 `work/decals/<id>/`）。定稿的 prompt 寫回 `assets.json`。
+- prompt 穩定、物件很多時可以先批次（`01_generate.py $P [id ...]`，同 prompt 換種子 4 張），只對不合格的走迭代。
 
-**審核清單**（每張都要逐項看）
+**審核清單**
 
 | 項目 | 不合格的樣子 |
 |---|---|
-| 單一物件 | 畫面裡多了別的東西、多出一個同款物件、有人 |
-| 完整 | 被畫面邊緣裁掉、貼著邊緣沒有留白 |
-| 符合描述 | 種類、顏色、形狀、部件數量、**姿態**與 prompt 或文字描述不符 |
-| 風格一致 | 和同一個空間的其他物件不是同一個世界的東西（太卡通、太復古、顏色體系不對） |
+| 單一物件 | 多了別的東西、多一個同款、有人 |
+| 完整 | 被畫面邊緣裁掉、沒有留白 |
+| 符合描述 | 種類、顏色、形狀、部件數量、姿態不符 |
+| 風格一致 | 和同空間其他物件不是同一個世界（太卡通、太復古、色彩體系不對） |
 | 背景乾淨 | 不是純白、有地面、有明顯投影 |
-| 適合 3D | 純正面看不出厚度（`image_slab` 除外）、極端透視、細長部件糊在一起、有透明部件 |
-| 文字（`image_slab`） | 出現文字描述沒有寫的字、亂碼 |
+| 適合 3D | 看不出厚度（平面影像除外）、極端透視、細長部件糊在一起、透明部件 |
+| 文字（平面影像） | 多出文字描述沒有的字、亂碼 |
+| 貼花 | 背景不是純白、痕跡太密太均勻（要稀疏、不規則）、邊緣切齊畫框 |
 
-**改寫 prompt 的原則**
+**寫 prompt 的原則**：英文一段話，只寫這一個物件；寫出種類、形狀、材質、顏色、關鍵部件、狀態與大致尺寸；
+同一區域用同一套材質與色彩語彙；細長鏤空的要求 "chunky solid forms"；不要在物件上要求文字或標誌。
+改 prompt 一次只針對看到的缺點，保留有效的描述；已合格就不要再改。
 
-- 一次只針對看到的缺點改，不要整段重寫；保留已經有效的描述。
-- 缺什麼就明講：「all five castors fully inside the frame」「exactly four legs」「forks raised to 1.5 metres」。
-- 模型沒照做時換說法或加強調，不要只是重複同一句。
-- 已經合格就不要再改 prompt；之後的張數只是換種子取得備選。
+全部完成後：`wsl -e bash -lc 'bash $R/pipeline/comfy_stop.sh'`（印出 `COMFY_STOPPED` 才能進下一步）。
 
-**輸出**：每個物件 `cand_0.png … cand_k.png`（k ≥ 3）與 `prompts.json`。全部物件完成後：
-
-```bash
-wsl -e bash -lc 'bash $P/pipeline/comfy_stop.sh'       # 印出 COMFY_STOPPED 才能進下一步
-```
-
-## 6. 步驟 3：選圖與去背
-
-產生對照表並逐一 Read：
+## 7. 步驟 4：選圖、去背、TRELLIS
 
 ```bash
-wsl -e bash -lc 'source ~/miniconda3/etc/profile.d/conda.sh; conda activate trellis2; python $P/pipeline/02_select_matte.py $P sheet'
-# → work/objects/<id>/sheet.png（左起：cand_0、cand_1、…）
+wsl -e bash -lc 'source ~/miniconda3/etc/profile.d/conda.sh; conda activate trellis2; python $R/pipeline/02_select_matte.py $P sheet'
 ```
 
-寫 `work/selection.json`，每個物件一筆：
-
-```json
-{
-  "office_chair":  {"pick": 0, "why": "五個輪子與扶手都清楚；cand 2 椅背變形"},
-  "poster_safety": {"pick": 1, "why": "正面、滿版、沒有多餘文字"}
-}
-```
-
-去背並檢查：
+Read 每個 `sheet.png`，寫 `work/selection.json`：`{"office_chair": {"pick": 0, "why": "五個輪子都清楚；cand 2 椅背變形"}, ...}`（道具、平面影像、貼花都要）。
 
 ```bash
-wsl -e bash -lc 'source ~/miniconda3/etc/profile.d/conda.sh; conda activate trellis2; python $P/pipeline/02_select_matte.py $P matte'
-# → rgba.png（透明背景）、review.png（左：原圖，右：洋紅底去背結果）
+wsl -e bash -lc '... conda activate trellis2; python $R/pipeline/02_select_matte.py $P matte'
 ```
 
-Read 每個 `review.png`。**通過條件**：物件完整、沒有殘留陰影或白邊大塊、細長部件（桿、腳、葉片）沒被吃掉、白色物件沒有被當成背景挖掉。
-不合格就改選別張，對該物件重跑 `matte <id>`。`image_slab` 不需要去背結果（步驟 5 直接用候選圖），它的 `review.png` 可以不看。
-
-## 7. 步驟 4：生成、檢視 3D 模型並減面
+只對需要去背的做（TRELLIS 道具、`alpha: matte` 的貼花）。Read 每個 `review.png`：物件完整、無殘影白邊、細件沒被吃掉、白色物件沒被挖空；不合格就換一張重跑 `matte <id>`。
 
 ```bash
-# 背景執行；失敗會自動重啟並跳過已完成的物件
-wsl -e bash -lc 'bash $P/pipeline/trellis_loop.sh $P 8 > $P/work/trellis.log 2>&1'
+wsl -e bash -lc 'bash $R/pipeline/trellis_loop.sh $P 8 > $P/work/trellis.log 2>&1'     # 背景執行
 ```
 
-監看 `work/trellis.log`：`[done] <id> in Ns`、`[FAIL] <id>`、`[all done]`、`[gave up after 8 attempts]`。
+監看 `work/trellis.log` 的 `[done]` / `[FAIL]` / `[all done]`。同一物件反覆失敗多半是去背圖有問題，回上一步換圖。
+`trellis.faces` 就是 LOD0 面數（見 docs/STANDARDS.md 3.2）；主角道具設 `high_faces` 會多輸出一個高模供烘焙法線。
 
-### 減面
+## 8. 步驟 5：道具（調參 → 批次 → 報告）
 
-場景裡有幾十種模型、上百個複本，不減面會重到無法操作。減面分兩層：
+不要一個指令一個指令地在即時視窗裡處理每個模型（慢又不穩）。流程是：
 
-1. **TRELLIS 輸出時**：GLB 會先減到 `trellis.faces`（預設 30000）才烘焙貼圖，這一層品質最好，優先在這裡設對。
+### 8.1 用代表性模型調參（Blender MCP，即時）
 
-   | 物件 | `trellis.faces` |
-   |---|---|
-   | 小道具（小於 0.5 m：托盤、顯微鏡、滅火器） | 8000–15000 |
-   | 一般家具與設備（椅子、推車、機台） | 20000–40000 |
-   | 大型或主視覺物件（雕塑、樹、車輛） | 50000–80000 |
-
-2. **匯入 Blender 後**：印出每個模型的面數。同款複本很多的物件用「面數 × 複本數」衡量，超過約 50 萬就再減：
-   加 Decimate 修改器（Collapse，ratio 不低於約 0.3）並套用；複本共用網格，只要做一次。減完用 `look` 確認輪廓沒有破、貼圖沒有錯位。
-   要減更多就改 `trellis.faces` 重跑該物件，不要把 ratio 壓得更低。
-
-表中的數字是起點，不是硬性規定；以「近看輪廓不出現明顯折角」為準往下調。組裝完成後在總結裡列出場景總面數。
-
-### 匯入與檢視
-
-完成後用 MCP 把每個 `model.glb` 匯入 Blender 檢視（這些物件之後直接留在場景裡用）：
-
-1. `execute_blender_code`：`bpy.ops.import_scene.gltf(filepath=...)`，合併成單一網格、套用變換、原點移到底部中心，物件命名為 `<id>`，
-   放進 `Models_TRELLIS` 集合。先放在遠離場景的暫存位置排成一列即可。
-   **glTF 匯入的物件是四元數旋轉**：先設 `obj.rotation_mode = 'XYZ'`，否則之後設 `rotation_euler` 不會有任何效果（複本也會繼承）。
-2. `look`：`mode="angles"`、`target=["<id>"]`、`shading="material"`，至少看正面與背面斜角兩個方向。
-3. 逐一對照選定的 2D 圖判斷。
-
-| 看到的問題 | 處理方式 |
-|---|---|
-| 同一物件反覆 `[FAIL]` | 看 `trellis.log` 的錯誤；多半是去背圖有問題（幾乎全透明、物件太小），回步驟 3 換一張 |
-| 文字或字母變成亂碼 | 改成 `"mode": "image_slab"`（刪掉匯入的模型）；需要一張正面 2D 圖，沒有就回步驟 2 用正面視角重新生成 |
-| 透明部件變成不透明白色、容器裡的東西消失 | 依步驟 0 的表改做法：玻璃在 Blender 建，內容物單獨生成；舊物件設 `status: "rejected"` 並寫 `note` |
-| 形狀明顯錯誤、破面、多出雜物 | 刪掉該物件的 `model.glb`，在 `trellis` 設不同的 `"seed"` 重跑；仍不行就回步驟 2 換一張 2D 圖 |
-| 貼圖偏色（鏡面金屬、純白物件） | 形狀留用，在 Blender 換材質或在 Base Color 前插一個色彩校正 |
-| 形狀正確但不夠精細（細節糊掉、薄件變厚、玩家會近看的主要物件） | 在 `trellis` 設 `"pipeline_type": "1024_cascade"` 重跑，必要時一併提高 `faces`。12 GB VRAM 上實心方塊與枝葉類曾因此 CUDA 錯誤；反覆 `[FAIL]` 就改回 512 |
-| 貼圖略糊但形狀正確，且是遠處小道具 | 可接受，在總結中註明 |
-
-重做單一物件：刪除 `work/objects/<id>/model.glb` 與 Blender 裡的舊物件後重跑 `trellis_loop.sh`，再重新匯入。每個物件最多重做 2 次，之後就接受並註明。
-
-**輸出**：每個非 `image_slab` 物件的 `work/objects/<id>/model.glb`，且都已匯入 Blender、看過、面數在預算內。
-
-## 8. 步驟 5：用 Blender MCP 組裝場景
-
-這一步沒有建置腳本。場景由你透過 Blender MCP 在使用者開著的 Blender 裡直接建出來：`execute_blender_code` 執行 `bpy` 程式碼，
-`look` 看結果，`get_scene_info` 查物件的位置與尺寸。**`scene.blend` 本身就是成果，也是唯一的狀態**；要改場景就改 Blender 裡的東西，
-不要把建置邏輯寫成磁碟上的 `.py` 檔。
-
-**工作方式**
-
-- 小步進行：每次 `execute_blender_code` 只做一件事（建一個空間的外殼、擺一組物件、調一組燈），印出關鍵數值，接著 `look` 確認，再做下一件。
-- 不要跨呼叫依賴 Python 變數；每段程式碼都從 `bpy.data.objects["名稱"]` 重新取得物件。
-- **重複用的小函式存在 .blend 裡的文字區塊**：建一個 Text datablock（慣例：`h` 放建模與擺位函式，`hm` 放材質函式），
-  每次呼叫開頭 `exec(bpy.data.texts["h"].as_string())`。它跟著 `scene.blend` 存檔，不是磁碟上的建置腳本。
-  接手既有場景時先看這兩個文字區塊在不在、裡面有什麼，再決定沿用或重寫。
-- 物件命名要讓之後的自己（或下一個工作階段）看得懂：模型用 `scene.json` 的 `<id>`、複本用 `<id>_2`、建築用 `<空間>_Floor`、`<空間>_Wall_N` 這類名稱、
-  燈用 `L_` 開頭、相機用 `Cam_<空間>`。集合：`Models_TRELLIS`、`Lights_Camera`，建築與道具依空間分（`Room_A1`、`Room_A2`…）。
-- **依名稱前綴刪除物件時要小心**：`Cam_A1` 的前綴也會比對到 `Cam_A10`–`Cam_A17`。用完整名稱，或前綴帶上分隔符號（`A1_`）。
-- 依 MCP 的規則寫程式碼：著色器節點用 `type` 找（`n.type == "BSDF_PRINCIPLED"`），不要用名稱；列舉值先讀再設。
-- 每完成一個空間就存檔：`bpy.ops.wm.save_as_mainfile(filepath=r"$PW\scene.blend")`（第一次）或 `bpy.ops.wm.save_mainfile()`。
-- `look` 的 `max_size` 平常用 800–1200 即可，只有要看細節時才放大。
-
-### 5.1 配置與座標
-
-- 世界座標：**+Y 是北、+X 是東、Z 向上**，地面 z = 0，單位公尺。文字描述若以「入口在南牆、面朝北」寫左右，西 = 左 = -X，東 = 右 = +X。
-- 每個空間建一個 Empty（`Room_<編號>`）放在該空間的原點（建議：南側入口的地面中點），空間內的東西都設為它的子物件，
-  用空間自己的座標建模。空間的實際朝向用這個 Empty 的 Z 旋轉決定，這樣文字裡的「北牆」「西牆」可以直接照寫。
-- 依連接關係從入口空間開始往外排：每放一個空間，就讓它的門洞中心與相鄰空間的門洞中心重合，牆厚留 0.2–0.3 m。
-  全部排完後從正上方 `look` 一次，確認沒有空間重疊、每個出入口都接得到東西。
-- 朝向慣例：物件正面朝 -Y 時為 yaw 0。掛在西牆（面朝東）的東西 yaw +90°，東牆 -90°，南牆 180°，北牆 0°。
-
-### 5.2 建築
-
-地面、牆、天花、門窗、樓梯、櫃台、層架、花台、遠景都在這裡建。用 `bmesh` 或 `from_pydata` 直接產生網格。
-
-- **照文字的分割方式建，不要用幾個平面交差。** 地磚一塊一塊建（板與板之間留縫）或至少有縫線幾何；牆面有分割板、踢腳、腰線；
-  天花有輕鋼架格、燈槽、出風口、灑水頭；門有門框、門把、門禁面板；窗有窗框與分格。
-- 門洞要真的開在牆上，相鄰空間之間走得過去。玻璃牆、玻璃門用玻璃材質，從這個空間要看得到隔壁。
-- 硬邊加 Bevel 修改器（1 段、寬 1–3 cm）；沒有倒角的邊吃不到高光，會顯得假。
-- 玩家到不了、也看不到的地方（建築背面、屋頂上方）用簡單的方盒封住即可，但不要留下會露出天空或虛空的破口。
-- 戶外空間要有遠景：周圍建築的量體、樹列、圍牆、道路，避免地平線上空無一物。
-- 標示文字用 Blender 文字物件（內容照文字描述一字不差），需要中文時指定有中文字形的字型檔。
-
-每建完一個空間就 `look`：一張從南側入口往北看（第一人稱高度），一張從斜上方看，確認尺寸、門洞位置與文字描述一致。
-
-### 5.3 匯入模型並擺位
-
-模型在步驟 4 檢視時已匯入並減面。對每個物件：
-
-1. **整理**：合併成單一網格、套用變換、原點在底部中心、`rotation_mode = 'XYZ'`；模型的正面若不是朝 -Y，先在網格資料上轉正。
-2. **定大小**：依 `height_m`（或物件的真實尺寸）等比縮放，再跟旁邊的門（2.1 m）、桌面（0.75 m）比一下是否合理。
-3. **定位置**：照文字描述的位置（靠哪面牆、離牆多遠）；文字沒寫的自己決定，但要合理：椅子在桌邊、垃圾桶在牆角、推車靠牆。
-4. **定朝向**：對齊所在的牆或家具，不要全部朝同一個方向。
-5. **重複物件**：`obj.copy()` 產生共用網格的複本，各自擺位，不要重新匯入；同款複本各自轉一點角度、位置稍微錯開，避免看起來像陣列。
-6. `look` 確認位置、大小；再用 `mode="angles"` 從側面或上方看一次，確認沒有懸空、沒有插進地面或牆裡。
-   `get_scene_info` 的 `ground` 欄位可以直接列出誰浮著。
-
-**`image_slab` 物件**（海報、螢幕畫面、照片、畫作）：建一塊薄板，正面貼選定的候選圖（`cand_<pick>.png`，不是去背圖），
-加上畫框或螢幕外殼的幾何。螢幕與燈箱把貼圖同時接到 Emission。
-
-**常見修正**
-
-| 問題 | 做法 |
-|---|---|
-| 生成的貼圖在場景裡太亮或太暗 | 在 Base Color 前插一個 Multiply（0.3–0.6 壓暗，1.5–2 提亮） |
-| 白色物件貼圖偏灰或偏色，和白色建築不搭 | 色彩校正拉回，或直接換成和建築同一套的材質 |
-| 模型上的螢幕、面板是糊的 | 另外生成一張 `image_slab` 畫面，做成貼在模型正面前方幾毫米的發光平面，設為模型的子物件 |
-| 同款物件看起來一模一樣 | 複本各自轉一點角度；海報類換圖 |
-
-### 5.4 填滿：不留大面積空平面
-
-這是硬性要求：**玩家看得到的地方不能有大面積的空平面**。建築與主要物件放完後，逐一從每個空間的第一人稱相機看（每個空間至少兩個方向），
-凡是還看得出一整片空的地面、牆面、天花（大約 3 m × 3 m 以上沒有任何東西打斷），就加東西，直到沒有為止。
-
-| 表面 | 可以加的東西 |
-|---|---|
-| 地面 | 鋪面分縫、嵌入式導引線與圖樣、地毯、防滑墊、排水溝蓋、檢修蓋；盆栽、長椅、垃圾桶、立牌、推車、紙箱、落葉或碎屑（依空間狀態） |
-| 牆面 | 分割板縫、踢腳與腰線、扶手、標示牌、海報與畫作、螢幕、佈告欄、滅火器箱、開關與插座、門禁面板、管線、通風格柵、壁燈、掛鐘 |
-| 天花 | 輕鋼架格、燈具與燈槽、出風口、灑水頭、煙霧偵測器、監視器、指示牌、吊掛管線與線槽、造型吊飾 |
-| 桌面與層架 | 螢幕、鍵盤、文件、杯子、檔案盒、儀器、樣本盒、小盆栽 |
-
-- 加的東西要符合該空間的用途與狀態（整潔的企業大廳不撒垃圾，崩塌的通道才有碎石），並與文字描述的視覺體系一致。
-- 小東西優先用 Blender 直接建（方盒、圓柱加倒角與材質就夠），需要辨識度的才回步驟 1 生成新物件。
-- 散佈物做 3–5 個原型網格，其餘用共用網格的複本，隨機位置、旋轉、大小；避開已放好的物件，全場景不超過 500 個。
-- 不要用貼圖假裝有東西：遠處可以，玩家走得到的地方要有實際幾何。
-
-**通過條件**：每個空間的每個檢查視角都沒有大片空面；加上去的東西沒有擋住出入口與文字描述的動線。
-
-### 5.5 表面材質
-
-**材質**用程序化節點直接做，座標用世界空間位置（Geometry → Position），紋理尺度就是真實的公尺，建築不需要 UV。
-牆面的磚縫、板縫這類圖樣用向量 `(x + y, z)` 就能同時適用兩個方向的牆。
-
-- 依文字描述的材質與顏色做；同一種材質全場景共用一個材質，不要每個空間各做一份。
-- 混凝土 / 地面：大尺度噪波做明暗，再乘一層更大尺度的噪波當髒污（髒的地方粗糙度高），細噪波接 Bump。乾淨的空間對比要很小。
-- 金屬、塗裝、玻璃：Principled BSDF 調 Metallic / Roughness / Transmission 即可。
-- 程序化做不出來的質感才用 Poly Haven（CC0）：`python pipeline/polyhaven.py search|size|get`（下載到 `work/textures/<id>/`），
-  下載前先告訴使用者要下載什麼、來源、大小，預設 1k；在 Blender 裡用 Box 投影的 Image Texture 接上。只用 Poly Haven，其他來源授權不一。
-
-| 看到的問題 | 調整 |
-|---|---|
-| 紋理顆粒大得像巨石，或小到變成雜訊 | 改 Mapping 的 Scale（對照場景裡物件的真實大小） |
-| 大片白色表面過曝成一片 | 基色降到 0.7–0.8，靠燈光把它打亮 |
-| 地面反光太強 | 提高粗糙度 |
-
-### 5.6 燈光
-
-確定 ComfyUI 與 TRELLIS 都已停止。引擎用 EEVEE（開 raytracing），色彩管理 AgX。
-
-- 照文字描述的「光線與色彩」做：光源位置、色溫、明暗分布。每個看得到的燈具（燈槽、吊燈、螢幕、指示燈）用 Emission，並配一盞對應的燈。
-- 一個空間一個空間做，每加一組燈就 `look`（`rendered`）。主光要有方向；補光最後才加，而且要弱。
-- 戶外用 Sky 貼圖或 Sun 加天空色的 World；室內靠窗的空間要讓日光真的照進來。
-- 霧與光暈只在文字有寫時才加：霧用 Volume Scatter 方盒（密度從 0.001 起），光暈用合成器的 Glare 節點（`look` 的 `rendered` 看不到合成器效果，要真的渲染一次）。
-- 燈很多時 EEVEE 會回報 shadow buffer 已滿：小的點綴燈關掉陰影，或調 `scene.eevee.shadow_pool_size`。
-
-### 5.7 相機、渲染、存檔
-
-- 每個空間建一台第一人稱相機 `Cam_<空間>`：高度與水平視角取 `scene.json` 的 `camera`（預設 1.6 m、90°），鏡頭水平不傾斜，
-  站在南側入口朝北看。大空間再加 `Cam_<空間>b`（從北端回望）、`c`、`d`（側面）。
-- `OverviewCamera` 放在場景斜上方、看得到全區的位置，用來檢查配置與懸空。
+每一類（雜物、硬表面、有機、主角）挑 1–2 個代表，在使用者開著的 Blender 裡跑同一份程式：
 
 ```python
-# 透過 execute_blender_code 執行；每台相機一張
-scene.camera = bpy.data.objects["Cam_A1"]; scene.render.filepath = r"$PW\work\renders\view_A1.png"; bpy.ops.render.render(write_still=True)
-# … 其餘相機同理；OverviewCamera → view_overview.png
-bpy.ops.file.pack_all(); bpy.ops.wm.save_mainfile()
+# execute_blender_code
+import runpy
+g = runpy.run_path(r"$R\pipeline\20_bake_props.py")
+print(g["tune"](r"$PW", "barricade"))                                   # 先用預設
+print(g["tune"](r"$PW", "barricade", decimate="planar", planar_angle=3, cage=0.012, delight=0.3))
 ```
 
-全部渲染完後拼成一張總表並 Read：
+- 結果留在 `T2S_Tune` 場景（使用者的其他場景不動）；用 `look`（`mode="angles"`、`shading="material"`）看 LOD0，也 Read `export/props/SM_<id>/preview.png`。
+- 回傳值有面數、內殼刪除數、AO 全黑比例、法線烘焙錯誤比例、LOD 輪廓變化與標記（`flags`）。
+- 參數穩定後寫進 `assets.json`：整類用 `"bake_presets": {"hard_surface": {...}}`，單一物件用該道具的 `"bake": {...}`。
+- MCP 連不上時，同樣的 `tune()` 也能用無介面 Blender 跑（`blender -b -P <小腳本>`），只是看不到即時畫面，改看 preview.png。
 
-```bash
-wsl -e bash -lc 'source ~/miniconda3/etc/profile.d/conda.sh; conda activate trellis2; python $P/pipeline/04_contact_sheet.py $P'
-# → work/renders/contact_sheet.png
+可調的參數（`20_bake_props.py` 的 `PRESETS`）：
+
+| 參數 | 作用 | 什麼時候動 |
+|---|---|---|
+| `hidden` | 刪除封閉內殼（射線出不去的連通塊） | 預設開；幾乎不用關 |
+| `interior` | 刪除內部面 | 預設開 |
+| `normals` | `auto`：只在射線測試證明有改善時才重算法線；`recalc` / `keep` | 報告有「faces point inward」時 |
+| `remesh` | 體素重建（物件尺寸的比例，例如 0.006），會強制重展 UV 並轉烘貼圖 | 網格爛、雙層牆、AO 大片全黑 |
+| `faces` | LOD0 面數上限 | TRELLIS 面數過多時（優先改 `trellis.faces` 重跑） |
+| `decimate` / `planar_angle` | `planar`：先合併平面（硬表面不跑形）；`collapse`：有機 | LOD 輪廓變形時 |
+| `uv` | `keep`（TRELLIS 的 UV）/ `smart`（重展並轉烘） | UV 浪費嚴重、貼圖密度太低 |
+| `cage` / `ray` | 烘焙 cage 外擴與射線距離（物件尺寸的比例） | 法線烘焙出現黑斑、穿透 |
+| `delight` | 壓平 AI 貼圖烘進的光影（0–1） | 頂面亮底面暗的貼圖 |
+| `albedo_normal` | 沒有高模時，從基色細節做微法線的強度 | 表面太光滑像模具 |
+| `tier` | `auto`：報告 ok 就信任；`review`：一律要人看 | 主角道具用 `review` |
+
+### 8.2 無介面批次
+
+```powershell
+.\pipeline\run.ps1 props -Project $PW                 # 全部
+.\pipeline\run.ps1 props -Project $PW -Ids a,b         # 部分
+.\pipeline\run.ps1 props -Project $PW -Retexture       # 只重做髒污 / 磨損 / 匯出（沿用烘焙結果，很快）
 ```
 
-**對照文字描述驗收**（沒有參考圖，文字就是標準）：一個空間一個空間，把該小節重讀一次，對著渲染圖逐項核對，回到 Blender 修正，最多 3 輪：
+### 8.3 看報告，只處理被標記的
 
-- 尺寸與格局、每個出入口與它通往的空間；
-- 文字列出的每一個固定物件是否存在、位置是否正確；
-- 標示文字的內容是否一字不差；
-- 光源、色溫、明暗；
-- 狀態細節（破損、污漬、遺留物）；
-- 步驟 5.4 的填滿要求。
+`export/props/bake_report.md`（完整資料在 `work/bake_report.json`）每列一個道具：原始面數、LOD 面數、貼圖尺寸與密度、AO 全黑比例、法線錯誤比例、標記。
 
-**通過條件**：上列各項逐一核對過，對不上的都已修正或記進總結；沒有物件懸空或穿插；
-`scene.blend` 已存檔且貼圖已打包（沒有未打包的外部圖檔）。
-
-### 5.8 植被、生物組織與荒廢感（程式生長）
-
-廢棄或被侵蝕的空間不能只靠擺放道具：牆、地、天花本身要被植物、增生組織與髒污蓋住，否則看起來只是「乾淨的房間裡放了幾盆草」。
-這些東西用 `.blend` 裡的文字區塊生成（接手時先確認它們在不在；它們跟著 `scene.blend` 存檔）：
-
-| 文字區塊 | 內容 |
+| 狀態 | 處理 |
 |---|---|
-| `hv` | 生長函式。以場景幾何建 BVH，用射線讓枝條貼著牆面、地面、天花爬行並分岔；遇到邊緣會垂下。`ivy`（爬藤）、`roots`（樹根與木質藤）、`hangers`（垂藤與氣根）、`ferns`、`shrubs`、`patches`（苔、生物組織薄層、污漬）、`infest`（組織群落：薄層 + 脈絡 + 絲 + TRELLIS 團塊）、`litter`、`cables`、`overgrow`（一個空間的整套基本層） |
-| `hvm` | 對應的材質。葉片是去背的葉子圖卡（`work/textures/veg/`，由 FLUX 的 `image_slab` 葉片圖裁切而來），其餘是程序化節點 |
-| `hr` | 每個空間的配方：`PLANTS`（密度等級與種子）、`FLESH`（群落數量）、各空間的特殊做法。`grow("<空間>")` 重建一個空間，`grow_all()` 重建全部 |
+| `ok`（tier auto） | 不用看 |
+| `review`（tier review，例如主角道具） | Read preview.png，確認正面方向（`yaw_fix`）、比例、髒污程度；必要時回 8.1 |
+| `check` | 依標記處理：AO 全黑 → 試 `remesh`；法線錯誤 → 調 `cage` / `ray`；LOD 變形 → `planar` 或降低比例；密度太低 → `uv: smart` 或提高 `trellis.texture` |
+| `fail` | 看錯誤訊息；多半是 GLB 有問題，回步驟 4 換種子或換圖 |
 
-- 生成的物件一律命名為 `<空間>_Veg_*`、`<空間>_Bio_*`、`<空間>_Grime_*`；`grow()` 會先刪掉這些再重建，所以要改就改 `hr` 裡的數字，不要手動改生成的物件。
-- 密度依文字描述分級（被植物吞噬的走廊最高、無塵的房間不做），但整體寧多勿少；用實際渲染檢查，material 預覽的亮度不準。
-- 細藤很吃面數：`hv` 已對細管減邊數並合併直線段，新增函式時沿用 `_tube`。
-- 新增葉片種類：在 `scene.json` 加一個白底俯拍的 `image_slab` 葉片圖，去背後裁切存到 `work/textures/veg/`，再在 `hv` 的 `LEAF` 表與 `hvm` 加一個 `mat_leaf`。
+每個物件最多重做 2 次，之後接受並在總結註明。所有 preview.png 也都看一眼正面方向：模型正面不是朝 -Y 就設 `yaw_fix`。
 
-## 9. 步驟 6：總結回報
+## 9. 步驟 6：材質與貼花
 
-交付時說明：
+```powershell
+python $R\pipeline\10_materials.py search concrete floor        # 找 CC0 掃描
+python $R\pipeline\10_materials.py size polyhaven:concrete_floor_02 2k
+python $R\pipeline\10_materials.py build $PW
+python $R\pipeline\11_decals.py $PW
+python $R\pipeline\12_shared.py $PW
+```
 
-- 空間表：建了哪些空間、尺寸、相機名稱。
-- 物件表：每個物件的做法（TRELLIS 512 / 1024_cascade / image_slab / 在 Blender 建模）、生成了幾張 2D 圖、prompt 改了幾次、面數、最終品質。
-- 自己補上的東西：文字沒寫、為了填滿或讓空間可信而加的物件。
-- 表面材質：各表面是程序化節點還是 Poly Haven 素材（附 asset id）。
-- 不合格或妥協的項目與原因。
-- 與文字描述的已知差異。
-- 場景總面數、`scene.blend` 檔案大小。
-- 各階段耗時（可從 `work/generation_log.jsonl` 和 `work/trellis.log` 取得）。
+- 材質的 `texel_density` 低於 512 會警告（近看會糊）：換更高解析度或縮小 `tile_m`。
+- 貼花看 `export/decals/<id>/T_<id>_BC.png`（帶透明）：邊緣要淡出、不能看到方形邊框。
+
+## 10. 步驟 7：完成 layout.json
+
+```jsonc
+"props":   [{"asset": "reception_desk", "room": "LOBBY", "pos": [6, 6.5], "yaw": 0},
+            {"asset": "lounge_sofa", "room": "LOBBY", "against": "W", "at": 4},          // 背靠西牆、面向室內
+            {"asset": "screen_lobby", "room": "LOBBY", "against": "N", "at": 6, "z": 1.6}],   // 牆面掛件：z 是底邊高度
+"scatter": [{"room": "OFFICE", "assets": ["paper_stack", "trash_bin"], "count": 6, "zone": "edges", "seed": 3}],
+"decals":  [{"asset": "floor_scuffs", "room": "LOBBY", "on": "floor", "pos": [7, 2], "yaw": 20},
+            {"asset": "wall_grime", "room": "CORR", "on": "wall:W", "pos": [3, 0.6]}],    // 牆面：[沿牆距離, 高度]
+"lights":  [{"room": "LOBBY", "type": "rect", "grid": {"spacing": [3, 3]}, "size": [1.2, 0.3], "lumens": 2400,
+             "kelvin": 4500, "mobility": "static", "fixture": "ceiling_light"},
+            {"room": "LOBBY", "type": "spot", "pos": [6, 8.5, 4.9], "dir": [0, 0.35, -1], "cone": 50,
+             "lumens": 3000, "kelvin": 5600, "shadows": true, "mobility": "stationary"}],
+"lighting": {"gi": "dynamic", "sun": {"dir": [-0.45, 0.55, -0.7], "lux": 75000, "kelvin": 5800}, "sky": true,
+             "fog": {"density": 0.015, "height_falloff": 0.25, "volumetric": true},
+             "post": {"exposure": [6, 14], "bloom": 0.35, "vignette": 0.25, "grain": 0.03, "saturation": 0.95,
+                      "contrast": 1.05, "white_balance": 6200, "ao": 0.5}},
+"cameras": [{"id": "LOBBY_v1", "room": "LOBBY", "pos": [7, 1.2, 1.6], "look": [6, 9, 1.8]}],
+"player_start": {"room": "PLAZA", "pos": [8, 2, 0], "yaw": 0}
+```
+
+- 座標都是空間自己的座標（原點在西南角），yaw 是物件從「正面朝 -Y」逆時針轉的角度；空間的 `yaw` 會自動套上。
+- `against` 依道具的實際深度把背面貼在牆上；需要離牆一點就加 `gap`。牆面掛件（`image_slab`）自動貼牆，`z` 是底邊高度。
+- 道具的位置要合理：椅子在桌邊、正面朝桌子；垃圾桶在牆角；不要擋門（`scatter` 會自動避開門口 1 m）。
+- `scatter` 的 `zone`：`floor`（隨機分布、隨機轉向）或 `edges`（沿牆、朝向室內、小角度抖動）；放不下會警告實際數量。
+- 燈：`grid` 把一個定義鋪滿天花（`spacing`、`margin`），`fixture` 在每盞燈的位置放燈具道具；`dir` 是光的方向（預設朝下）。
+  有陰影的燈每個空間 ≤ 4 盞（重疊上限），其餘關陰影。
+- `gi`：`dynamic`（Unreal Lumen、所有燈 Movable；Unity 即時燈 + 探針）或 `baked`（光照貼圖，需要烘焙）。
+- `cameras`：每個空間至少一台審查鏡頭（沒寫的空間會自動在南側入口朝北放一台）；大空間多放幾台（回望、側面、主角道具近景）。
+
+**填滿的要求**：玩家看得到的地方不能有大面積空平面（約 3 × 3 m 以上沒有任何東西打斷）。
+用散佈、貼花、牆面掛件（海報、螢幕、標示、滅火器箱、開關）、天花設備（燈、出風口、偵測器）把它補滿，但要符合空間用途與狀態。
+
+## 11. 步驟 8：匯入引擎與驗收
+
+```powershell
+.\pipeline\run.ps1 layout -Project $PW          # 第二次：用真實面數算預算
+.\pipeline\run.ps1 engine -Project $PW -Shots
+```
+
+- **Unreal**：`t2s_unreal.py` 建主材質（`M_T2S_Prop` / `Surface` / `Glass` / `Decal`）、材質實例、匯入網格（不透明的開 Nanite）、
+  在 `/Game/T2S/Maps/<name>` 生成所有實例、燈、太陽、天空、高度霧、後處理、反射捕捉、貼花、鏡頭與 PlayerStart。
+  日誌在 `export/unreal_import.log`。重跑時只重匯入有變更的檔案，關卡中帶 `T2S` 標籤的 actor 會重建，使用者手動加的不受影響。
+  日誌出現 `WARNING project setting ...`（例如 Mesh Distance Fields 關閉，Lumen 沒有間接光、天花全黑）時告訴使用者，由使用者決定是否改專案設定。
+- **Unity**：`T2SImporter.cs`（`run.ps1` 會複製到專案的 `Assets/T2S/Editor/`）依 URP / HDRP / Built-in 建材質、
+  帶 LODGroup 與碰撞的 prefab、場景、燈、後處理 Volume、探針、貼花（URP 需要 Renderer 上有 Decal 功能）。日誌在 `export/unity_import.log`。
+  URP / Built-in 的燈沒有物理單位（流明是近似換算），截圖太暗或太亮先調 `lumens` 或太陽的 `lux`；
+  Unity 端的間接光與反射探針要烘焙才有（`Unity.exe ... -t2sBake`，或在編輯器 Lighting 視窗烘焙）。
+  Unity 專案路徑不要太深：Windows 路徑上限 260 字元，太深時 URP 套件裡的部分 Shader Graph 範本會載入失敗。
+
+**驗收**（文字就是標準）：一個空間一個空間，重讀文字小節，對著審查截圖逐項核對，回到 `layout.json` 或資產修正，最多 3 輪：
+
+- 尺寸、格局、每個出入口與通往的空間；
+- 每個固定物件存在、位置與朝向正確；
+- 標示文字；光源、色溫、明暗；狀態細節；
+- 三個距離都有細節（docs/STANDARDS.md 第 4 節）、沒有大面積空平面；
+- 沒有懸空或穿插（道具底面在地上、牆面掛件貼牆）；
+- `budget.json` 沒有未處理的超標。
+
+截圖太暗或太亮時調 `post.exposure` 或燈的 `lumens`，不要用後處理硬拉。
+
+## 12. 步驟 9：總結回報
+
+- 空間表：空間、尺寸（與文字的差異）、使用的模組套件、審查鏡頭。
+- 道具表：做法（TRELLIS / image_slab）、2D 張數與 prompt 修改次數、preset 與覆寫、LOD0 面數、貼圖密度、報告狀態。
+- 被標記的項目與處理結果；放棄或妥協的項目與原因。
+- 表面材質：來源（Poly Haven / ambientCG asset id 或 flat）、貼圖密度。
+- 自己補上的東西（文字沒寫、為了可信或填滿而加的）。
+- 需要使用者在引擎裡補的：植被、地形、門扇動畫、互動。
+- `budget.json` 的總數：實例、LOD0 三角面、貼圖記憶體、材質數；超標項目。
+- 各階段耗時（`work/generation_log.jsonl`、`work/trellis.log`、`bake_report.json` 的 seconds）。
 - 確認 ComfyUI 與 TRELLIS 都已停止。
 
-只回報實際看過、驗證過的結果；沒檢查的項目要明說沒檢查。
+只回報實際看過、驗證過的結果；沒檢查的要明說。
 
-## 10. 檔案對照
+## 13. 檔案對照
 
 ```
-<場景文字描述>.md               輸入：空間的文字描述（使用者提供）
-scene.json                      物件定義（你撰寫與修改）
-pipeline/01_generate.py         FLUX.2 klein 4B 文字生圖（--next 迭代模式 / 批次模式）
-pipeline/comfy_t2i.py           ComfyUI API 客戶端（被 01 呼叫）
-pipeline/comfy_start.sh|stop.sh 啟動 / 停止 ComfyUI
-pipeline/02_select_matte.py     對照表（sheet）與去背（matte）
-pipeline/03_trellis_batch.py    TRELLIS.2 批次，輸出已減面的 GLB（被 loop 呼叫）
-pipeline/trellis_loop.sh        TRELLIS 自動重啟迴圈
-pipeline/04_contact_sheet.py    把所有 view_*.png 拼成一張總表
-pipeline/polyhaven.py           搜尋 / 下載 Poly Haven CC0 貼圖
-work/objects/<id>/              cand_*.png、prompts.json、sheet.png、rgba.png、review.png、model.glb
-work/selection.json             選圖結果與理由（你撰寫）
-work/textures/<asset id>/       下載的 Poly Haven 貼圖
-work/renders/                   各相機的渲染圖與總表
-scene.blend                     場景本身：由你透過 Blender MCP 建立，沒有對應的建置腳本
+<場景描述>.md                       輸入：文字描述（使用者提供）
+assets.json / layout.json           你撰寫：要做什麼 / 怎麼組
+t2s.config.json（repo 根目錄）       工具路徑（從 examples/ 複製）
+
+pipeline/01_generate.py             FLUX.2 klein 4B 文字生圖（--next 迭代 / 批次）
+pipeline/comfy_t2i.py               ComfyUI API 客戶端
+pipeline/comfy_start.sh|stop.sh     啟動 / 停止 ComfyUI
+pipeline/02_select_matte.py         對照表與去背
+pipeline/03_trellis_batch.py        TRELLIS.2 → model.glb（+ model_high.glb）
+pipeline/trellis_loop.sh            TRELLIS 自動重啟迴圈
+pipeline/10_materials.py            CC0 掃描（Poly Haven、ambientCG）與平塗材質
+pipeline/11_decals.py               貼花去背、法線
+pipeline/12_shared.py               macro variation、細節法線、預設貼圖
+pipeline/20_bake_props.py           Blender：道具清理、烘焙、髒污、LOD、碰撞、報告（tune / 批次）
+pipeline/21_build_kit.py            Blender：模組件 + 座標軸校正件
+pipeline/30_layout.py               layout.json → level.json、kit_needed.json、budget.json
+pipeline/textures.py, t2s.py        共用函式
+pipeline/engines/unreal/t2s_unreal.py   Unreal 匯入器
+pipeline/engines/unity/Editor/T2SImporter.cs  Unity 匯入器
+pipeline/contact_sheet.py           把截圖拼成一張總表
+pipeline/run.ps1                    各步驟的指令包裝
+
+work/props/<id>/      cand_*.png、prompts.json、sheet.png、rgba.png、model.glb、bake/
+work/decals/<id>/     cand_*.png、prompts.json
+work/materials/<id>/  下載的掃描原檔
+work/selection.json   選圖結果（你撰寫）
+work/bake_report.json 道具報告（完整）
+export/               引擎讀的全部東西：shared/、materials/、decals/、props/、kit/、level.json、budget.json、shots/
 ```
